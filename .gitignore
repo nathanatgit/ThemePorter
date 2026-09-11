@@ -4,7 +4,7 @@
 /local.properties
 /.kotlin/
 /build/
-**/build/
+/*/build/
 captures/
 .externalNativeBuild/
 .cxx/
