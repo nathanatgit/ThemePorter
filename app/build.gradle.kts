@@ -13,6 +13,26 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0.0"
+
+        // Nubia/ZTE devices are all arm64; skip bundling other ABIs' native libs.
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
+    }
+
+    // Release signing comes from CI secrets (see .github/workflows/release.yml), never from
+    // values checked into this file. A local assembleRelease without these env vars set simply
+    // produces an unsigned APK.
+    signingConfigs {
+        create("release") {
+            val keystorePath = System.getenv("RELEASE_KEYSTORE_PATH")
+            if (keystorePath != null) {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("RELEASE_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("RELEASE_KEY_ALIAS") ?: "key1"
+                keyPassword = System.getenv("RELEASE_KEYSTORE_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
@@ -23,6 +43,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            if (System.getenv("RELEASE_KEYSTORE_PATH") != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
