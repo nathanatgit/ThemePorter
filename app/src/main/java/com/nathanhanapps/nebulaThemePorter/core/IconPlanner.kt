@@ -11,9 +11,7 @@ data class IconPlan(
     val icons: List<PlannedIcon>,
     /** ZteSystemApp.id to SourceIcon.id. */
     val systemAssignments: Map<String, String>,
-) {
-    val componentStems: List<String> get() = icons.filter(PlannedIcon::isComponent).map(PlannedIcon::stem)
-}
+)
 
 /**
  * Decides which file names each source image is written under.
@@ -40,7 +38,6 @@ class IconPlanner(
     fun plan(
         sources: List<SourceIcon>,
         systemAssignments: Map<String, String>,
-        style: ThemeStyle,
         onlyInstalledApps: Boolean,
         manualAssignments: Map<String, String> = emptyMap(),
         generateMissingAppIcons: Boolean = false,
@@ -69,7 +66,6 @@ class IconPlanner(
         eligible.forEach { source ->
             source.component?.takeIf { it.className != null }?.let { add(it.stem, source.id) }
         }
-        val packagesWithComponents = HashSet<String>()
         eligible.forEach { source ->
             val packageName = source.packageName()
             val installed = installedLaunchers[packageName].orEmpty()
@@ -79,15 +75,13 @@ class IconPlanner(
                 stock.stemsFor(AppComponent.sanitize(packageName))
             }
             stems.forEach { add(it, source.id) }
-            if (stems.isNotEmpty() || source.component?.className != null) packagesWithComponents += packageName
         }
         val fallbacks = HashSet<String>()
         eligible.forEach { source ->
             val packageName = source.packageName()
             // MIUI alias names such as com.android.contacts.activities.TwelveKeyDialer are not packages here.
             if (ZteSystemApps.matchAlias(source.key) != null && packageName !in installedLaunchers) return@forEach
-            val needsFallback = style == ThemeStyle.FIXED || packageName !in packagesWithComponents
-            if (needsFallback && fallbacks.add(packageName)) add(AppComponent.sanitize(packageName), source.id)
+            if (fallbacks.add(packageName)) add(AppComponent.sanitize(packageName), source.id)
         }
 
         // Last resort: apps the pack/theme has no artwork for at all get a temp resource generated from their

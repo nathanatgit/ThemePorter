@@ -102,17 +102,13 @@ import com.nathanhanapps.nebulaThemePorter.core.DeviceIconId
 import com.nathanhanapps.nebulaThemePorter.core.FixedIconShape
 import com.nathanhanapps.nebulaThemePorter.core.FixedIconComposition
 import com.nathanhanapps.nebulaThemePorter.core.GradientMix
-import com.nathanhanapps.nebulaThemePorter.core.IconShape
-import com.nathanhanapps.nebulaThemePorter.core.LayerMode
 import com.nathanhanapps.nebulaThemePorter.core.NebulaSpec
-import com.nathanhanapps.nebulaThemePorter.core.ThemeStyle
 import com.nathanhanapps.nebulaThemePorter.core.ZteSystemApp
 import com.nathanhanapps.nebulaThemePorter.core.ZteSystemApps
 import com.nathanhanapps.nebulaThemePorter.render.Shapes
 import com.nathanhanapps.nebulaThemePorter.source.SourceKind
 import com.nathanhanapps.nebulaThemePorter.source.InstalledApps
 import com.nathanhanapps.nebulaThemePorter.storage.StorageAccess
-import com.nathanhanapps.nebulaThemePorter.system.IconShapeSwitcher
 import kotlinx.coroutines.delay
 import java.io.File
 import java.util.Locale
@@ -127,7 +123,6 @@ fun PorterApp(viewModel: PorterViewModel) {
 
     LifecycleResumeEffect(Unit) {
         viewModel.refreshFileAccess()
-        viewModel.refreshShapeStatus()
         onPauseOrDispose { }
     }
 
@@ -182,7 +177,6 @@ fun PorterApp(viewModel: PorterViewModel) {
                     ?.setPrimaryClip(ClipData.newPlainText(context.getString(R.string.last_crash_title), report))
                 Toast.makeText(context, R.string.crash_copied, Toast.LENGTH_SHORT).show()
             },
-            onApplyShape = viewModel::applyShape,
             onOpenThemes = { openThemesApp(context) },
         )
         Stage.LOADING -> BusyScreen(stringResource(R.string.reading_source), null)
@@ -232,7 +226,6 @@ private fun HomeScreen(
     onRequestAccess: () -> Unit,
     onDismissCrash: () -> Unit,
     onCopyCrash: (String) -> Unit,
-    onApplyShape: (IconShape) -> Unit,
     onOpenThemes: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -338,14 +331,6 @@ private fun HomeScreen(
                 }
             }
 
-            state.shapeStatus?.let { status ->
-                item {
-                    SectionHeader(stringResource(R.string.applied_theme), stringResource(R.string.shape_controls_require_root))
-                    Spacer(Modifier.height(10.dp))
-                    AppliedShapeCard(state, status, onApplyShape)
-                }
-            }
-
             item {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
@@ -364,36 +349,6 @@ private fun HomeScreen(
                         )
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AppliedShapeCard(state: PorterState, status: IconShapeSwitcher.Status, onApplyShape: (IconShape) -> Unit) {
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 1.dp),
-    ) {
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(stringResource(R.string.icon_shape), style = MaterialTheme.typography.titleMedium)
-            if (status.supportsShapes) {
-                ShapePicker(status.current, onApplyShape, enabled = !state.shapeBusy)
-                Hint(
-                    stringResource(R.string.shape_root_help),
-                )
-            } else {
-                Hint(stringResource(R.string.fixed_shape_help))
-            }
-            if (state.shapeBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
-            state.shapeMessage?.let { message ->
-                Text(
-                    message,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (state.shapeMessageIsError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                )
             }
         }
     }
@@ -671,13 +626,6 @@ private fun ConfigureScreen(
             item {
                 Section(stringResource(R.string.output)) {
                     OutlinedTextField(state.outputName, viewModel::setOutputName, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.file_name)) }, singleLine = true)
-                    if (options.style == ThemeStyle.ADAPTIVE && !state.outputName.startsWith(NebulaSpec.SHAPE_THEME_PREFIX)) {
-                        Text(
-                            stringResource(R.string.shape_prefix_warning, NebulaSpec.SHAPE_THEME_PREFIX),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
                     if (state.hasFileAccess) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
@@ -697,40 +645,16 @@ private fun ConfigureScreen(
                 }
             }
             item {
-                Section(stringResource(R.string.icon_style)) {
-                    ChoiceChips(
-                        listOf(ThemeStyle.ADAPTIVE to stringResource(R.string.variable_shape), ThemeStyle.FIXED to stringResource(R.string.fixed_shape)),
-                        options.style,
-                        viewModel::setStyle,
-                    )
+                Section(stringResource(R.string.fixed_icon_shape)) {
+                    Hint(stringResource(R.string.fixed_shape_detail))
+                    FixedShapePicker(options.fixedShape, viewModel::setFixedShape, state.fixedBackgroundName, onPickFixedBackground, viewModel::clearFixedBackground)
                     Hint(
-                        if (options.style == ThemeStyle.ADAPTIVE) {
-                            stringResource(R.string.variable_shape_detail)
-                        } else {
-                            stringResource(R.string.fixed_shape_detail)
-                        },
+                        if (options.fixedShape.isOriginal) stringResource(R.string.fixed_original_detail)
+                        else stringResource(R.string.fixed_shape_rendered_detail),
                     )
                 }
             }
-            if (options.style == ThemeStyle.ADAPTIVE) {
-                item {
-                    Section(stringResource(R.string.default_shape)) {
-                    ShapePicker(options.defaultShape, viewModel::setShape)
-                    }
-                }
-            }
-            if (options.style == ThemeStyle.FIXED) {
-                item {
-                    Section(stringResource(R.string.fixed_icon_shape)) {
-                        FixedShapePicker(options.fixedShape, viewModel::setFixedShape, state.fixedBackgroundName, onPickFixedBackground, viewModel::clearFixedBackground)
-                        Hint(
-                            if (options.fixedShape.isOriginal) stringResource(R.string.fixed_original_detail)
-                            else stringResource(R.string.fixed_shape_rendered_detail),
-                        )
-                    }
-                }
-            }
-            if (options.style == ThemeStyle.FIXED && !options.fixedShape.isOriginal) {
+            if (!options.fixedShape.isOriginal) {
                 item {
                     FixedIconCompositionSection(
                         options,
@@ -796,31 +720,6 @@ private fun ConfigureScreen(
                     }
                     if (state.wallpaperName == null && state.selectedWallpaperId == null) {
                         GeneratedWallpaperStudio(options, viewModel)
-                    }
-                }
-            }
-            if (options.style == ThemeStyle.ADAPTIVE) {
-                item {
-                    Section(stringResource(R.string.layer_split)) {
-                        ChoiceChips(
-                            listOf(
-                                LayerMode.AUTO to stringResource(R.string.layer_auto),
-                                LayerMode.CROP to stringResource(R.string.layer_crop),
-                                LayerMode.PAD to stringResource(R.string.layer_plate),
-                            ),
-                            options.layerMode,
-                            viewModel::setLayerMode,
-                        )
-                        Hint(
-                            when (options.layerMode) {
-                                LayerMode.AUTO -> stringResource(R.string.layer_auto_detail)
-                                LayerMode.CROP -> stringResource(R.string.layer_crop_detail)
-                                LayerMode.PAD -> stringResource(R.string.layer_plate_detail)
-                            },
-                        )
-                        if (options.layerMode != LayerMode.CROP) {
-                            MaterialYouPalette(options.padBackground, state.wallpaperPalette, viewModel::setPadBackground, showTransparencyNote = true)
-                        }
                     }
                 }
             }
@@ -1002,37 +901,6 @@ private fun <T> ChoiceChips(choices: List<Pair<T, String>>, selected: T, onSelec
 }
 
 @Composable
-private fun ShapePicker(selected: IconShape?, onSelect: (IconShape) -> Unit, enabled: Boolean = true) {
-    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        IconShape.entries.forEach { shape ->
-            val isSelected = shape == selected
-            val containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh
-            val contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-            Surface(
-                onClick = { onSelect(shape) },
-                enabled = enabled,
-                modifier = Modifier.widthIn(min = 76.dp),
-                shape = MaterialTheme.shapes.medium,
-                color = containerColor,
-                contentColor = contentColor,
-                border = if (isSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
-            ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Canvas(Modifier.size(36.dp)) {
-                        drawPath(Shapes.path(shape, size.minDimension).asComposePath(), color = contentColor)
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    Text(localizedShapeLabel(shape), style = MaterialTheme.typography.labelSmall)
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun FixedShapePicker(
     selected: FixedIconShape,
     onSelect: (FixedIconShape) -> Unit,
@@ -1168,7 +1036,6 @@ private fun FixedTintPaletteControls(
                 selected = options.padBackground,
                 palette = palette,
                 onSelect = viewModel::setPadBackground,
-                showTransparencyNote = false,
             )
             if (options.fixedComposition != FixedIconComposition.OVERLAY) {
                 Hint(stringResource(R.string.fixed_comp_background_may_be_hidden))
@@ -1381,26 +1248,10 @@ private fun FixedIconPreview(imageId: String?, options: com.nathanhanapps.nebula
 }
 
 @Composable
-private fun MaterialYouPalette(
-    selected: Long,
-    palette: List<Long>,
-    onSelect: (Long) -> Unit,
-    showTransparencyNote: Boolean,
-) {
-    CollapsibleTintPanel(
-        title = stringResource(R.string.background_tint),
-        detail = stringResource(R.string.selected_wallpaper_palette_detail),
-    ) {
-        BackgroundTintControls(selected, palette, onSelect, showTransparencyNote)
-    }
-}
-
-@Composable
 private fun BackgroundTintControls(
     selected: Long,
     palette: List<Long>,
     onSelect: (Long) -> Unit,
-    showTransparencyNote: Boolean,
 ) {
     val fallback = listOf(
         MaterialTheme.colorScheme.primary.toArgb().toLong(),
@@ -1431,7 +1282,6 @@ private fun BackgroundTintControls(
             },
             valueRange = 0f..1f,
         )
-        if (showTransparencyNote) Hint(stringResource(R.string.transparency_supported_detail))
     }
     if (showPicker) {
         ColorPickerDialog(
@@ -1809,11 +1659,7 @@ private fun DoneScreen(state: PorterState, onAdjust: () -> Unit, onHome: () -> U
                     }
                     Text(
                         if (state.hasFileAccess) {
-                            if (state.options.style == ThemeStyle.ADAPTIVE) {
-                                stringResource(R.string.apply_then_switch_shape)
-                            } else {
-                                stringResource(R.string.open_themes_to_apply)
-                            }
+                            stringResource(R.string.open_themes_to_apply)
                         } else {
                             stringResource(R.string.move_then_apply)
                         },
@@ -1862,17 +1708,6 @@ private fun ErrorScreen(message: String, onHome: () -> Unit) {
 
 private fun formatBytes(bytes: Long): String =
     if (bytes >= 1024 * 1024) String.format(Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024.0)) else "${bytes / 1024} KB"
-
-@Composable
-private fun localizedShapeLabel(shape: IconShape): String = stringResource(
-    when (shape) {
-        IconShape.CIRCLE -> R.string.shape_circle
-        IconShape.SQUIRCLE -> R.string.shape_squircle
-        IconShape.ROUNDED_SQUARE -> R.string.shape_rounded_square
-        IconShape.LEAF -> R.string.shape_leaf
-        IconShape.TEARDROP -> R.string.shape_teardrop
-    },
-)
 
 @Composable
 private fun localizedFixedShapeLabel(shape: FixedIconShape): String = stringResource(

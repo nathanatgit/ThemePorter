@@ -52,75 +52,14 @@ class StockThemeRegressionTest {
     }
 
     @Test
-    fun theme13IsAdaptiveWithEveryAsset() {
-        val theme = load("default_theme_13")
-        assertOuterLayout(theme)
-        assertEquals("config_1", theme.description["defaultIconShape"])
-        assertEquals("true", theme.description["isSupportIconShapeChange"])
-        val expected = ThemeLayout.specialFiles(ThemeStyle.ADAPTIVE, IconShape.SQUIRCLE, ShapeAsset.entries.toSet(), includeIconInfo = true)
-        assertEquals(expected.toSet(), specialFiles(theme))
-    }
-
-    @Test
-    fun theme49SupportsShapesWithoutIconInfoOrFolderPlate() {
-        val theme = load("default_theme_49")
-        assertOuterLayout(theme)
-        assertEquals("true", theme.description["isSupportIconShapeChange"])
-        val expected = ThemeLayout.specialFiles(
-            ThemeStyle.ADAPTIVE,
-            IconShape.SQUIRCLE,
-            ShapeAsset.entries.toSet() - ShapeAsset.FOLDER_ICON,
-            includeIconInfo = false,
-        )
-        assertEquals(expected.toSet(), specialFiles(theme))
-    }
-
-    @Test
-    fun theme04DefaultsToCircle() {
-        val theme = load("default_theme_04")
-        assertEquals("config", theme.description["defaultIconShape"])
-        val expected = ThemeLayout.specialFiles(
-            ThemeStyle.ADAPTIVE,
-            IconShape.CIRCLE,
-            ShapeAsset.entries.toSet(),
-            includeIconInfo = true,
-            includeBackgroundIcons = true,
-        )
-        assertEquals(expected.toSet(), specialFiles(theme))
-    }
-
-    @Test
     fun theme60IsFixedShape() {
         val theme = load("default_theme_60")
         assertOuterLayout(theme)
         assertNull(theme.description["defaultIconShape"])
         assertNull(theme.description["isSupportIconShapeChange"])
         val expected = ThemeLayout.specialFiles(
-            ThemeStyle.FIXED,
-            IconShape.SQUIRCLE,
             setOf(ShapeAsset.MASK, ShapeAsset.FOLDER_ADD, ShapeAsset.DYNAMIC_CALENDAR, ShapeAsset.DYNAMIC_CLOCK),
-            includeIconInfo = false,
         )
         assertEquals(expected.toSet(), specialFiles(theme))
-    }
-
-    @Test
-    fun stockShapeConfigsMatchIconShapePaths() {
-        val theme = load("default_theme_13")
-        val dir = System.getenv("NEBULA_STOCK_THEMES")!!.let(::File)
-        ZipFile(dir.resolve("default_theme_13.zmtp")).use { zip ->
-            ZipInputStream(zip.getInputStream(zip.getEntry(NebulaSpec.ICONS_CUR))).use { icons ->
-                val configs = mutableMapOf<String, String>()
-                while (true) {
-                    val entry = icons.nextEntry ?: break
-                    if (entry.name.startsWith("icon/config")) configs[entry.name.removePrefix("icon/")] = icons.readBytes().toString(Charsets.UTF_8)
-                }
-                IconShape.entries.forEach { shape ->
-                    val stock = configs.getValue("${shape.configName}.xml")
-                    assertTrue(shape.name, stock.contains("\"${shape.svgPath}\""))
-                }
-            }
-        }
-        assertTrue(theme.iconFiles.isNotEmpty())
     }
 }

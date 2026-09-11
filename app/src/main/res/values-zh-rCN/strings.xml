@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">星云主题助手</string>
     <string name="home_title">星云主题助手</string>
-    <string name="home_tagline">在手机本地将图标包和 MIUI 主题转换为精致的 NebulaAIOS 主题。</string>
+    <string name="home_tagline">在手机本地将图标包和 HyperOS 主题转换为 NebulaAIOS 主题。</string>
     <string name="last_crash_title">应用上次意外停止</string>
     <string name="dismiss">忽略</string>
     <string name="copy_crash">复制报告</string>
@@ -28,16 +28,11 @@
     <string name="detecting_icon_packs">正在检测已安装的图标包…</string>
     <string name="no_installed_icon_packs">未找到启动器可见且包含 appfilter.xml 的已安装图标包。仍可从主页选择 APK 文件。</string>
     <string name="refresh">刷新</string>
-    <string name="applied_theme">当前主题</string>
-    <string name="shape_controls_require_root">形状切换需要 Root</string>
     <string name="open_themes_app">打开主题应用</string>
 
     <string name="offline_detail">完全离线运行，不会上传任何内容。</string>
     <string name="themes_save_to">主题将保存到 %1$s，可在生成前更改。</string>
     <string name="save_then_apply">将结果保存到内部存储/Theme，然后在主题应用中应用。</string>
-    <string name="icon_shape">图标形状</string>
-    <string name="shape_root_help">主题应用只为内置主题提供形状选择。此处通过 Root 以相同方式切换形状（请在 KernelSU 或 Magisk 中授权本应用）。</string>
-    <string name="fixed_shape_help">当前主题使用固定图标形状。请先在主题应用中应用一个可变形状主题。</string>
     <string name="reading_source">正在读取源文件…</string>
     <string name="building">正在生成…</string>
     <string name="customize_theme">自定义主题</string>
@@ -52,22 +47,15 @@
     <string name="description">说明</string>
     <string name="output">输出</string>
     <string name="file_name">文件名</string>
-    <string name="shape_prefix_warning">如果没有 %1$s 前缀，切换形状时分层应用图标会保持系统遮罩；只有文件夹、日历、时钟和未适配应用会跟随变化。系统检查的是主题名，也就是文件名。</string>
     <string name="change_folder">更改文件夹</string>
     <string name="replace_file_hint">同名文件将被替换。部分系统选择器也会禁止选择存储根目录、“下载”或 Theme 等受保护文件夹；如遇此情况请选择其他可写文件夹。</string>
     <string name="choose_save_each_time">未授予所有文件访问权限时，每次都需要选择保存位置。</string>
     <string name="allow_all_files_access">允许访问所有文件</string>
-    <string name="icon_style">图标样式</string>
-    <string name="variable_shape">可变形状</string>
-    <string name="fixed_shape">固定形状</string>
-    <string name="variable_shape_detail">生成类似 default_theme_04、13 和 49 的 _back/_front 分层图标。应用后可在本应用主页切换图标形状（需要 Root）。</string>
     <string name="fixed_shape_detail">每个应用使用一张平面 PNG。可保留导入 PNG 原样，或像 Material You 图标一样将形状和底板预绘制进 PNG。</string>
-    <string name="default_shape">默认形状</string>
-    <string name="unthemed_app_shape">未适配应用的形状</string>
     <string name="fixed_icon_shape">固定应用图标形状</string>
     <string name="fixed_shape_none">无</string>
     <string name="fixed_original_detail">保留导入 PNG 原有的轮廓和透明区域，不添加固定形状或底板。</string>
-    <string name="fixed_shape_rendered_detail">此形状会预绘制到每个固定应用图标 PNG 中，不受系统仅有的五种可切换形状限制。</string>
+    <string name="fixed_shape_rendered_detail">此形状会预绘制到每个固定应用图标 PNG 中。</string>
     <string name="fixed_icon_composition">固定图标合成</string>
     <string name="fixed_icon_preview">固定图标预览</string>
     <string name="fixed_icon_preview_pick">预览图标</string>
@@ -96,13 +84,6 @@
     <string name="fixed_comp_cover_detail">裁剪导入图标，使其完全铺满选中的形状背景。</string>
     <string name="fixed_comp_clip_detail">保留所选图标大小，但按选中形状背景的轮廓裁切。</string>
     <string name="fixed_comp_background_may_be_hidden">在"铺满"和"按背景裁切"模式下，若图标本身没有透明边缘，背景颜色可能会被完全遮住而看不见。</string>
-    <string name="layer_split">图层拆分</string>
-    <string name="layer_auto">自动</string>
-    <string name="layer_crop">裁剪填充</string>
-    <string name="layer_plate">放置在底板上</string>
-    <string name="layer_auto_detail">填满轮廓的图标会裁入背景层；透明图形会放在底板上。</string>
-    <string name="layer_crop_detail">始终将图形裁剪为最大的非透明正方形，让启动器形状替换原始轮廓。</string>
-    <string name="layer_plate_detail">始终保留完整图标，缩小后放到底板上，不会裁掉内容。</string>
     <string name="options">选项</string>
     <string name="installed_apps_only">仅包含本机已安装应用</string>
     <string name="installed_apps_detail">源文件的 %2$d 个软件包中有 %1$d 个已安装。系统应用始终包含。</string>
@@ -182,7 +163,6 @@
     <string name="lightness">明度</string>
     <string name="use_color">使用此颜色</string>
     <string name="background_opacity">背景不透明度：%1$d%%</string>
-    <string name="transparency_supported_detail">可变形状图层以 ARGB PNG 保存，但 Nubia 在应用主题后可能会将部分透明的背景与黑色混合。</string>
     <string name="launcher_default">启动器默认图标</string>
     <string name="cancel">取消</string>
     <string name="clear">清除</string>
@@ -192,7 +172,6 @@
     </plurals>
     <string name="theme_saved">主题已保存</string>
     <string name="build_result_summary">%1$d 个图标 · %2$d 个应用条目 · %3$s</string>
-    <string name="apply_then_switch_shape">在主题应用中应用后，可随时返回这里切换图标形状。</string>
     <string name="open_themes_to_apply">打开主题应用并应用新主题。</string>
     <string name="move_then_apply">将 .zmtp 放入内部存储/Theme，然后在主题应用中应用。</string>
     <string name="adjust_and_rebuild">调整并重新生成</string>
@@ -200,10 +179,6 @@
     <string name="read_file_error_title">无法读取文件</string>
     <string name="back_to_home">返回主页</string>
     <string name="shape_circle">圆形</string>
-    <string name="shape_squircle">方圆形</string>
-    <string name="shape_rounded_square">圆角方形</string>
-    <string name="shape_leaf">叶形</string>
-    <string name="shape_teardrop">水滴形</string>
     <string name="shape_square">方形</string>
     <string name="shape_samsung_squircle">三星方圆形</string>
     <string name="shape_ios_squircle">iOS 连续圆角形</string>
@@ -232,9 +207,6 @@
     <string name="progress_wallpapers">壁纸</string>
     <string name="progress_previews">预览图</string>
     <string name="progress_saved">已保存</string>
-    <string name="shape_non_prefixed_warning">形状已设置，但“%1$s”不以 %2$s 开头，因此分层图标会保持系统遮罩。请重命名 .zmtp 后重新应用。</string>
-    <string name="shape_applied">已应用%1$s。</string>
-    <string name="shape_applied_to_theme">已将%1$s应用到 %2$s。</string>
     <string name="choose_local_folder">请选择本机存储中的文件夹。</string>
     <string name="cannot_read_image">无法读取图片。</string>
     <string name="cannot_create_path">无法创建 %1$s。</string>
@@ -255,7 +227,4 @@
     <string name="cannot_decode_appfilter">无法解析二进制 appfilter.xml。</string>
     <string name="empty_appfilter">appfilter.xml 中没有图标条目。</string>
     <string name="no_raster_icons">未解析到 PNG、WebP 或 JPEG 图标。暂不支持只有矢量图的图标包。</string>
-    <string name="root_unavailable">Root 权限不可用。请在 KernelSU 或 Magisk 中允许“星云主题助手”，然后重试。</string>
-    <string name="root_failed">Root 请求被拒绝或执行失败%1$s</string>
-    <string name="shape_not_confirmed">系统未确认新的图标形状。</string>
 </resources>

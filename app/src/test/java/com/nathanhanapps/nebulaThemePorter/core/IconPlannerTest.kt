@@ -18,28 +18,21 @@ class IconPlannerTest {
     )
 
     @Test
-    fun miuiAliasesMapToZteSystemApps() {
+    fun miuiAliasesMapToZteSystemAppsAndPackageOnlyFallbacks() {
         val planner = IconPlanner(StockComponentIndex(listOf(wechatStem)), emptyMap())
         val assignments = planner.autoAssignSystemApps(mtzSources)
         assertEquals("i:dialer", assignments["phone"])
         assertEquals("i:contacts", assignments["contacts"])
 
-        val plan = planner.plan(mtzSources, assignments, ThemeStyle.ADAPTIVE, onlyInstalledApps = false)
-        assertEquals(listOf(phoneStem, contactsStem, wechatStem), plan.icons.map { it.stem })
-        assertEquals("i:mm", plan.icons.last().sourceId)
-    }
-
-    @Test
-    fun fixedStyleAddsPackageOnlyFallbacks() {
-        val planner = IconPlanner(StockComponentIndex(listOf(wechatStem)), emptyMap())
-        val plan = planner.plan(mtzSources, planner.autoAssignSystemApps(mtzSources), ThemeStyle.FIXED, onlyInstalledApps = false)
+        val plan = planner.plan(mtzSources, assignments, onlyInstalledApps = false)
         assertEquals(listOf(phoneStem, contactsStem, wechatStem, "com_tencent_mm"), plan.icons.map { it.stem })
+        assertEquals("i:mm", plan.icons.last().sourceId)
     }
 
     @Test
     fun unknownActivityFallsBackToPackageName() {
         val planner = IconPlanner(StockComponentIndex(emptyList()), emptyMap())
-        val plan = planner.plan(listOf(SourceIcon("i:x", "org.example.reader")), emptyMap(), ThemeStyle.ADAPTIVE, onlyInstalledApps = false)
+        val plan = planner.plan(listOf(SourceIcon("i:x", "org.example.reader")), emptyMap(), onlyInstalledApps = false)
         assertEquals(listOf("org_example_reader"), plan.icons.map { it.stem })
     }
 
@@ -50,12 +43,13 @@ class IconPlannerTest {
         val notInstalled = SourceIcon("res/bar.png", "com.bar", AppComponent("com.bar", "com.bar.Main"))
         val planner = IconPlanner(StockComponentIndex(emptyList()), mapOf("com.foo.app" to listOf("com.foo.app.MainActivity")))
 
-        val plan = planner.plan(listOf(old, current, notInstalled), emptyMap(), ThemeStyle.ADAPTIVE, onlyInstalledApps = true)
+        val plan = planner.plan(listOf(old, current, notInstalled), emptyMap(), onlyInstalledApps = true)
         val byStem = plan.icons.associate { it.stem to it.sourceId }
         assertEquals("res/old.png", byStem["com_foo_app-com_foo_app_OldActivity"])
         assertEquals("res/new.png", byStem["com_foo_app-com_foo_app_MainActivity"])
         assertFalse(byStem.keys.any { it.startsWith("com_bar") })
-        assertFalse("com_foo_app" in byStem)
+        // Every eligible source also gets a package-only fallback stem; the first one wins.
+        assertEquals("res/old.png", byStem["com_foo_app"])
     }
 
     @Test
@@ -81,7 +75,7 @@ class IconPlannerTest {
     @Test
     fun assignmentsToMissingSourcesAreDropped() {
         val planner = IconPlanner(StockComponentIndex(emptyList()), emptyMap())
-        val plan = planner.plan(emptyList(), mapOf("phone" to "gone"), ThemeStyle.ADAPTIVE, onlyInstalledApps = false)
+        val plan = planner.plan(emptyList(), mapOf("phone" to "gone"), onlyInstalledApps = false)
         assertTrue(plan.icons.isEmpty())
         assertTrue(plan.systemAssignments.isEmpty())
     }
@@ -96,7 +90,6 @@ class IconPlannerTest {
         val plan = planner.plan(
             listOf(automatic, chosen),
             emptyMap(),
-            ThemeStyle.ADAPTIVE,
             onlyInstalledApps = true,
             manualAssignments = mapOf(stem to "chosen", "../unsafe" to "chosen", "com_missing-Main" to "gone"),
         )
@@ -116,7 +109,6 @@ class IconPlannerTest {
         val plan = planner.plan(
             listOf(matched),
             emptyMap(),
-            ThemeStyle.ADAPTIVE,
             onlyInstalledApps = true,
             generateMissingAppIcons = true,
         )
@@ -132,7 +124,7 @@ class IconPlannerTest {
     @Test
     fun deviceFallbackIsOffByDefaultAndSkippableByFlag() {
         val planner = IconPlanner(StockComponentIndex(emptyList()), mapOf("com.bar.app" to listOf("com.bar.app.MainActivity")))
-        val plan = planner.plan(emptyList(), emptyMap(), ThemeStyle.ADAPTIVE, onlyInstalledApps = true)
+        val plan = planner.plan(emptyList(), emptyMap(), onlyInstalledApps = true)
         assertTrue(plan.icons.isEmpty())
     }
 

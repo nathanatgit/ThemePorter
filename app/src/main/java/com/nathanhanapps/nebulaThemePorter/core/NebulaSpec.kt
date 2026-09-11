@@ -20,7 +20,6 @@ object NebulaSpec {
 
     const val ICON_DIR = "icon/"
     const val CALENDAR_INFO = "theme_info_dynamic_calendar.xml"
-    const val ICON_INFO = "theme_info_icon.xml"
     const val THEME_INFO = "theme_info.xml"
     const val SHORTCUT_BG = "theme_shortcut_bg_settings.png"
     const val BG_ICON_LIGHT = "theme_bg_icon-0_65.png"
@@ -30,14 +29,6 @@ object NebulaSpec {
     const val SUFFIX_BACK = "_back"
     const val SUFFIX_FRONT = "_front"
     const val SUFFIX_SQUARE = "_square"
-
-    /**
-     * The theme name is the imported file's name without extension (system caches live in
-     * /data/resource-cache/cache/<name>). android.graphics.drawable.AdaptiveIconDrawableMifavor applies the
-     * config*.xml shape mask only when that name starts with this prefix; otherwise layered icons get the system
-     * default mask, while theme_* shape assets still switch.
-     */
-    const val SHAPE_THEME_PREFIX = "default_theme_"
 
     const val THEME_VERSION = "16.0.1"
     const val MAX_PREVIEWS = 6
@@ -88,77 +79,14 @@ object NebulaSpec {
     fun iconEntry(fileName: String): String = ICON_DIR + fileName
 }
 
-enum class ThemeStyle {
-    /** Layered icons; the user can switch the icon shape after applying (stock 04, 13, 49). */
-    ADAPTIVE,
-
-    /** One flat PNG per app; the drawn shape is final (stock 60 and most community ports). */
-    FIXED,
-}
-
-/** The five shapes stock adaptive themes ship as config*.xml. The SVG paths use a 100x100 viewport. */
 /** A vector outline that can be rasterized into a fixed PNG or used as a launcher mask. */
 interface IconMaskShape {
     val svgPath: String
 }
 
-enum class IconShape(
-    val configName: String,
-    val labelEn: String,
-    val labelZh: String,
-    override val svgPath: String,
-) : IconMaskShape {
-    CIRCLE(
-        "config",
-        "Circle",
-        "圆形",
-        "M50,0A50,50,0,1,1,0,50,50,50,0,0,1,50,0Z",
-    ),
-    SQUIRCLE(
-        "config_1",
-        "Squircle",
-        "圆角矩形",
-        "M25,100h0l-.9,0c-.47,0-1,0-1.45-.07l-.29,0-.56,0-.54-.06-.51-.06-.7-.1-.57-.09-.3-.06-.13,0A24.21,24.21,0,0,1," +
-            "5.5,91.32,26.15,26.15,0,0,1,.78,81.93,25.16,25.16,0,0,1,0,76V24.05a25.16,25.16,0,0,1,.77-6A26.15,26.15,0,0,1," +
-            "5.5,8.68a24.18,24.18,0,0,1,13.1-8l.58-.12.48-.09.39-.06.7-.1.51-.06L21.8.19l.56,0,.29,0c.49,0,1-.06,1.45-.07L25," +
-            "0H75c.71,0,1.54,0,2.35.1l.28,0,.57,0,.54.06.51.06.69.1.58.09.3.06.12,0A24.2,24.2,0,0,1,94.5,8.68a26,26,0,0,1," +
-            "4.71,9.39A24.39,24.39,0,0,1,100,24l0,.71v51a25.3,25.3,0,0,1-.78,6.25,26,26,0,0,1-4.71,9.39,24.18,24.18,0,0,1-" +
-            "13.1,8l-.58.12-.48.09-.4.06-.69.1-.51.06-.54.06-.57,0-.28,0c-.81,0-1.64.08-2.35.1H25Z",
-    ),
-    ROUNDED_SQUARE(
-        "config_2",
-        "Rounded square",
-        "大圆角",
-        "M42.8,0H57.2c13.36,0,19.34,1.61,25,4.65A31.65,31.65,0,0,1,95.35,17.79c3,5.67,4.65,11.65,4.65,25V57.2c0,13.36-" +
-            "1.61,19.34-4.65,25A31.65,31.65,0,0,1,82.21,95.35c-5.67,3-11.65,4.65-25,4.65H42.8c-13.36,0-19.34-1.61-25-4.65A" +
-            "31.65,31.65,0,0,1,4.65,82.21C1.61,76.54,0,70.56,0,57.2V42.8c0-13.36,1.61-19.34,4.65-25A31.65,31.65,0,0,1,17.79," +
-            "4.65C23.46,1.61,29.44,0,42.8,0Z",
-    ),
-    LEAF(
-        "config_3",
-        "Leaf",
-        "叶形",
-        "M16.72,0H57.2c13.36,0,19.34,1.61,25,4.65A31.65,31.65,0,0,1,95.35,17.79c3,5.67,4.65,11.65,4.65,25V83.28c0,5.81-" +
-            ".61,7.92-1.74,10a12,12,0,0,1-4.93,4.93c-2.13,1.13-4.24,1.74-10,1.74H42.8c-13.36,0-19.34-1.61-25-4.65A31.65," +
-            "31.65,0,0,1,4.65,82.21C1.61,76.54,0,70.56,0,57.2V16.72c0-5.81.61-7.92,1.74-10A12,12,0,0,1,6.67,1.74C8.8.61," +
-            "10.91,0,16.72,0Z",
-    ),
-    TEARDROP(
-        "config_4",
-        "Teardrop",
-        "水滴",
-        "M50,0a50,50,0,0,1,50,50V83.28c0,5.81-.61,7.92-1.74,10a12,12,0,0,1-4.93,4.93c-2.13,1.13-4.24,1.74-10,1.74H50A50," +
-            "50,0,0,1,50,0Z",
-    ),
-    ;
-
-    /** "" for config, "_1".."_4" for config_1..config_4. Every per-shape asset uses the same suffix. */
-    val variantSuffix: String get() = configName.removePrefix("config")
-}
-
 /**
- * Shapes baked into fixed icons. Unlike [IconShape], these are not sent to the system or restricted by its five
- * config names: the porter clips the final PNG before it goes into the theme archive.
+ * Shapes baked into fixed icons. These are never sent to the system as a launcher-switchable mask: the porter
+ * clips the final PNG before it goes into the theme archive.
  *
  * Most of these match androidx.compose.material3.MaterialShapes (Apache 2.0): vertex offsets, corner-rounding
  * radii and the mirror/repeat layout are read from its source, then rendered into flat 100x100 cubic-Bezier
@@ -273,7 +201,7 @@ enum class FixedIconShape(
     val isOriginal: Boolean get() = this == NONE
 }
 
-/** Launcher assets that exist once per shape in adaptive themes and once in fixed-shape themes. */
+/** Launcher assets that exist once per fixed-shape theme. */
 enum class ShapeAsset(val baseName: String) {
     MASK("theme_mask_icon"),
     FOLDER_ICON("theme_folder_icon"),
@@ -282,44 +210,23 @@ enum class ShapeAsset(val baseName: String) {
     DYNAMIC_CLOCK("theme_dynamic_clock"),
     ;
 
-    fun fileName(style: ThemeStyle, shape: IconMaskShape): String = when (style) {
-        ThemeStyle.ADAPTIVE -> {
-            require(shape is IconShape) { "Adaptive assets require one of the launcher config shapes" }
-            "${baseName}_config${shape.variantSuffix}.png"
-        }
-        ThemeStyle.FIXED -> "$baseName.png"
-    }
+    fun fileName(): String = "$baseName.png"
 }
 
 object ThemeLayout {
-    fun shapes(style: ThemeStyle, defaultShape: IconShape): List<IconShape> = when (style) {
-        ThemeStyle.ADAPTIVE -> IconShape.entries
-        ThemeStyle.FIXED -> listOf(defaultShape)
-    }
-
-    fun configFileName(style: ThemeStyle, shape: IconShape): String = when (style) {
-        ThemeStyle.ADAPTIVE -> "${shape.configName}.xml"
-        ThemeStyle.FIXED -> "config.xml"
-    }
+    const val CONFIG_FILE = "config.xml"
 
     /** Names of the non-app files in icon/ for a configuration. */
     fun specialFiles(
-        style: ThemeStyle,
-        defaultShape: IconShape,
         assets: Set<ShapeAsset>,
-        includeIconInfo: Boolean,
         includeShortcutBackground: Boolean = true,
         includeBackgroundIcons: Boolean = true,
         includeEffectTop: Boolean = false,
         includeThemeInfo: Boolean = false,
     ): List<String> = buildList {
-        val shapes = shapes(style, defaultShape)
-        shapes.forEach { add(configFileName(style, it)) }
-        ShapeAsset.entries.filter { it in assets }.forEach { asset ->
-            shapes.forEach { add(asset.fileName(style, it)) }
-        }
+        add(CONFIG_FILE)
+        ShapeAsset.entries.filter { it in assets }.forEach { asset -> add(asset.fileName()) }
         if (ShapeAsset.DYNAMIC_CALENDAR in assets) add(NebulaSpec.CALENDAR_INFO)
-        if (includeIconInfo) add(NebulaSpec.ICON_INFO)
         if (includeThemeInfo) add(NebulaSpec.THEME_INFO)
         if (includeShortcutBackground) add(NebulaSpec.SHORTCUT_BG)
         if (includeBackgroundIcons) {

@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">Nebula Theme Porter</string>
     <string name="home_title">Nebula Theme Porter</string>
-    <string name="home_tagline">Turn icon packs and MIUI themes into polished NebulaAIOS themes — locally on your phone.</string>
+    <string name="home_tagline">Turn icon packs and HyperOS themes into NebulaAIOS themes — locally on your phone.</string>
     <string name="last_crash_title">The app stopped last time</string>
     <string name="dismiss">Dismiss</string>
     <string name="copy_crash">Copy report</string>
@@ -28,16 +28,11 @@
     <string name="detecting_icon_packs">Detecting installed icon packs…</string>
     <string name="no_installed_icon_packs">No launcher-visible installed icon packs with appfilter.xml were found. You can still choose an APK file from the home screen.</string>
     <string name="refresh">Refresh</string>
-    <string name="applied_theme">Applied theme</string>
-    <string name="shape_controls_require_root">Shape controls require root</string>
     <string name="open_themes_app">Open Themes app</string>
     <string name="private_by_design" translatable="false">Design by NathanHan</string>
     <string name="offline_detail">Works offline. Nothing is uploaded.</string>
     <string name="themes_save_to">Themes save to %1$s. You can change this before building.</string>
     <string name="save_then_apply">Save the result in Internal storage/Theme, then apply it from the Themes app.</string>
-    <string name="icon_shape">Icon shape</string>
-    <string name="shape_root_help">The Themes app only offers shapes for its built-in themes. This switches the shape the same way, using root (allow the app in KernelSU or Magisk).</string>
-    <string name="fixed_shape_help">The applied theme has fixed icon shapes. Apply a variable-shape theme in the Themes app first.</string>
     <string name="reading_source">Reading source…</string>
     <string name="building">Building…</string>
     <string name="customize_theme">Customize theme</string>
@@ -52,22 +47,15 @@
     <string name="description">Description</string>
     <string name="output">Output</string>
     <string name="file_name">File name</string>
-    <string name="shape_prefix_warning">Without the %1$s prefix, layered app icons keep the system mask when you switch shape; only folders, calendar, clock and unthemed apps follow. The system checks the theme name, which is the file name.</string>
     <string name="change_folder">Change folder</string>
     <string name="replace_file_hint">An existing file with the same name is replaced. Some system pickers also block protected folders such as the storage root, Download or Theme; choose another writable folder if needed.</string>
     <string name="choose_save_each_time">Without all-files access you choose where to save each time.</string>
     <string name="allow_all_files_access">Allow all-files access</string>
-    <string name="icon_style">Icon style</string>
-    <string name="variable_shape">Variable shape</string>
-    <string name="fixed_shape">Fixed shape</string>
-    <string name="variable_shape_detail">Layered _back/_front icons like default_theme_04, 13 and 49. After applying, switch the icon shape from this app’s home screen (needs root).</string>
     <string name="fixed_shape_detail">One flat PNG per app. Keep the imported PNG, or bake a selected shape and plate into it like a Material You icon.</string>
-    <string name="default_shape">Default shape</string>
-    <string name="unthemed_app_shape">Shape for unthemed apps</string>
     <string name="fixed_icon_shape">Fixed app-icon shape</string>
     <string name="fixed_shape_none">None</string>
     <string name="fixed_original_detail">Keep the imported PNG’s original outline and transparency. No fixed shape or plate is added.</string>
-    <string name="fixed_shape_rendered_detail">This shape is baked into every fixed app-icon PNG. It is independent of the five system-switchable shapes.</string>
+    <string name="fixed_shape_rendered_detail">This shape is baked into every fixed app-icon PNG.</string>
     <string name="fixed_icon_composition">Fixed icon composition</string>
     <string name="fixed_icon_preview">Fixed icon preview</string>
     <string name="fixed_icon_preview_pick">Preview icon</string>
@@ -96,13 +84,6 @@
     <string name="fixed_comp_cover_detail">Crop the imported icon so it completely fills the selected shaped background.</string>
     <string name="fixed_comp_clip_detail">Keep the icon’s chosen size, but crop it to the selected shaped background outline.</string>
     <string name="fixed_comp_background_may_be_hidden">In Cover and Crop to background, the icon can fully cover this color if its artwork has no transparent margin.</string>
-    <string name="layer_split">Layer split</string>
-    <string name="layer_auto">Auto</string>
-    <string name="layer_crop">Crop to fill</string>
-    <string name="layer_plate">Place on plate</string>
-    <string name="layer_auto_detail">Icons that fill their shape are cropped into the background layer; transparent glyphs go on a plate.</string>
-    <string name="layer_crop_detail">Always crop the artwork to the largest opaque square, so the launcher shape replaces the original outline.</string>
-    <string name="layer_plate_detail">Always keep the whole icon, shrunk onto a plate. Nothing is cut off.</string>
     <string name="options">Options</string>
     <string name="installed_apps_only">Only apps installed on this phone</string>
     <string name="installed_apps_detail">%1$d of %2$d source packages are installed. System apps are always included.</string>
@@ -186,7 +167,6 @@
     <string name="lightness">Lightness</string>
     <string name="use_color">Use color</string>
     <string name="background_opacity">Background opacity: %1$d%%</string>
-    <string name="transparency_supported_detail">Variable-shape layers are saved as ARGB PNGs, but Nubia may composite partial background alpha against black after applying the theme.</string>
     <string name="launcher_default">Launcher default</string>
     <string name="cancel">Cancel</string>
     <string name="clear">Clear</string>
@@ -197,7 +177,6 @@
     </plurals>
     <string name="theme_saved">Theme saved</string>
     <string name="build_result_summary">%1$d icons · %2$d app entries · %3$s</string>
-    <string name="apply_then_switch_shape">Apply it in Themes, then return here whenever you want to switch icon shape.</string>
     <string name="open_themes_to_apply">Open the Themes app to apply your new theme.</string>
     <string name="move_then_apply">Put the .zmtp in Internal storage/Theme, then apply it from Themes.</string>
     <string name="adjust_and_rebuild">Adjust and rebuild</string>
@@ -205,10 +184,6 @@
     <string name="read_file_error_title">Could not read the file</string>
     <string name="back_to_home">Back to home</string>
     <string name="shape_circle">Circle</string>
-    <string name="shape_squircle">Squircle</string>
-    <string name="shape_rounded_square">Rounded square</string>
-    <string name="shape_leaf">Leaf</string>
-    <string name="shape_teardrop">Teardrop</string>
     <string name="shape_square">Square</string>
     <string name="shape_samsung_squircle">Samsung Squircle</string>
     <string name="shape_ios_squircle">iOS Squircle</string>
@@ -237,9 +212,6 @@
     <string name="progress_wallpapers">Wallpapers</string>
     <string name="progress_previews">Previews</string>
     <string name="progress_saved">Saved</string>
-    <string name="shape_non_prefixed_warning">Shape set, but “%1$s” does not start with %2$s, so layered icons keep the system mask. Rename the .zmtp and apply it again.</string>
-    <string name="shape_applied">%1$s applied.</string>
-    <string name="shape_applied_to_theme">%1$s applied to %2$s.</string>
     <string name="choose_local_folder">Choose a folder on this phone’s storage.</string>
     <string name="cannot_read_image">Cannot read the image.</string>
     <string name="cannot_create_path">Cannot create %1$s.</string>
@@ -260,7 +232,4 @@
     <string name="cannot_decode_appfilter">Cannot decode the binary appfilter.xml.</string>
     <string name="empty_appfilter">appfilter.xml has no icon entries.</string>
     <string name="no_raster_icons">No PNG, WebP or JPEG icons resolved. Vector-only icon packs are not supported.</string>
-    <string name="root_unavailable">Root access is not available. Allow Nebula Theme Porter in KernelSU or Magisk, then try again.</string>
-    <string name="root_failed">Root request was denied or failed%1$s</string>
-    <string name="shape_not_confirmed">The system did not confirm the new shape.</string>
 </resources>

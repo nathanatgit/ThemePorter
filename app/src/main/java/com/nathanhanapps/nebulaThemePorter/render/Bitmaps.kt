@@ -15,7 +15,6 @@ import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.Drawable
 import androidx.core.graphics.PathParser
 import com.nathanhanapps.nebulaThemePorter.core.IconMaskShape
-import com.nathanhanapps.nebulaThemePorter.core.IconShape
 import java.io.ByteArrayOutputStream
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -90,8 +89,8 @@ object Bitmaps {
      * An [AdaptiveIconDrawable] draws its background layer and clips to the platform's own icon mask (usually a
      * circle), which would otherwise bake the app's own shape into what downstream code treats as a plain,
      * unshaped source icon - producing a shape that doesn't match the theme's chosen outline once [FixedIconArt]
-     * or [IconLayering] apply their own background/tint. Drawing the layers directly (skipping the drawable's own
-     * `draw()`) avoids that live system mask regardless of [includeBackground].
+     * applies its own background/tint. Drawing the layers directly (skipping the drawable's own `draw()`) avoids
+     * that live system mask regardless of [includeBackground].
      *
      * By default only the foreground layer is used, yielding a full-bleed glyph like ordinary icon-pack artwork
      * so the rest of the pipeline shapes and tints it exactly the same way. [includeBackground] additionally

@@ -66,13 +66,6 @@ data class ThemeMetadata(
     val lockScreenWallpaperType: Int = 1,
 )
 
-enum class LayerMode {
-    /** Crop icons whose artwork fills their shape; place transparent-silhouette icons on a background. */
-    AUTO,
-    CROP,
-    PAD,
-}
-
 /** The draw order for a pre-rendered fixed icon. It never changes the system's icon-shape setting. */
 enum class FixedIconComposition {
     /** Blend a translucent shaped plate behind the icon, so the imported artwork remains readable. */
@@ -113,8 +106,6 @@ data class CalendarTextStyle(
 )
 
 data class BuildOptions(
-    val style: ThemeStyle = ThemeStyle.ADAPTIVE,
-    val defaultShape: IconShape = IconShape.SQUIRCLE,
     /** Fixed icons can bake any [FixedIconShape] into their PNG; NONE preserves the imported outline. */
     val fixedShape: FixedIconShape = FixedIconShape.NONE,
     val fixedComposition: FixedIconComposition = FixedIconComposition.OVERLAY,
@@ -130,7 +121,6 @@ data class BuildOptions(
     /** Side of the shaped background as a fraction of the final fixed PNG. */
     val fixedBackgroundScale: Float = 1f,
     val generatedWallpaper: GeneratedWallpaper = GeneratedWallpaper(),
-    val layerMode: LayerMode = LayerMode.AUTO,
     val padBackground: Long = 0xFFFFFFFF,
     val onlyInstalledApps: Boolean = true,
     val generateMissingDynamicIcons: Boolean = true,

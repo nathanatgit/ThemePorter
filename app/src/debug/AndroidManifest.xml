@@ -6,10 +6,6 @@
         <activity
             android:name=".debug.DebugBuildActivity"
             android:exported="true" />
-        <!-- Debug builds only: switches the applied theme's icon shape over adb, see DebugShapeReceiver. -->
-        <receiver
-            android:name=".debug.DebugShapeReceiver"
-            android:exported="true" />
     </application>
 
 </manifest>

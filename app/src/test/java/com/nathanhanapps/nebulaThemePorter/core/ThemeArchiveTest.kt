@@ -50,7 +50,7 @@ class ThemeArchiveTest {
                     wallpaperJpeg = byteArrayOf(1),
                     lockscreenJpeg = byteArrayOf(2),
                     overlayFiles = NebulaSpec.OVERLAY_APKS.associateWith { byteArrayOf(3) },
-                    androidzteShapeConfig = ThemeXml.shapeConfig(IconShape.SQUIRCLE),
+                    androidzteShapeConfig = ThemeXml.shapeConfig(FixedIconShape.SQUARE),
                     iconsCurZip = icons,
                     previewJpegs = List(8) { byteArrayOf(4) },
                 ),

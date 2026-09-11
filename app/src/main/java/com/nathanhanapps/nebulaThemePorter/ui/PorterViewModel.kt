@@ -20,16 +20,13 @@ import com.nathanhanapps.nebulaThemePorter.core.AppComponent
 import com.nathanhanapps.nebulaThemePorter.core.DeviceIconId
 import com.nathanhanapps.nebulaThemePorter.core.IconPlan
 import com.nathanhanapps.nebulaThemePorter.core.IconPlanner
-import com.nathanhanapps.nebulaThemePorter.core.IconShape
 import com.nathanhanapps.nebulaThemePorter.core.FixedIconShape
 import com.nathanhanapps.nebulaThemePorter.core.FixedIconComposition
 import com.nathanhanapps.nebulaThemePorter.core.GradientMix
-import com.nathanhanapps.nebulaThemePorter.core.LayerMode
 import com.nathanhanapps.nebulaThemePorter.core.NebulaSpec
 import com.nathanhanapps.nebulaThemePorter.core.SourceIcon
 import com.nathanhanapps.nebulaThemePorter.core.StockComponentIndex
 import com.nathanhanapps.nebulaThemePorter.core.ThemeMetadata
-import com.nathanhanapps.nebulaThemePorter.core.ThemeStyle
 import com.nathanhanapps.nebulaThemePorter.core.ZteSystemApp
 import com.nathanhanapps.nebulaThemePorter.core.ZteSystemApps
 import com.nathanhanapps.nebulaThemePorter.render.PreviewRenderer
@@ -43,7 +40,6 @@ import com.nathanhanapps.nebulaThemePorter.source.SourceWallpaper
 import com.nathanhanapps.nebulaThemePorter.source.ThemeSource
 import com.nathanhanapps.nebulaThemePorter.storage.PorterPreferences
 import com.nathanhanapps.nebulaThemePorter.storage.StorageAccess
-import com.nathanhanapps.nebulaThemePorter.system.IconShapeSwitcher
 import java.io.File
 import java.io.OutputStream
 import java.util.Locale
@@ -111,14 +107,19 @@ data class PorterState(
     val outputName: String = "",
     val outputPath: String? = null,
     val lastCrash: String? = null,
-    /** Icon shape of the theme applied on this phone; null when the system has no theme service. */
-    val shapeStatus: IconShapeSwitcher.Status? = null,
-    val shapeBusy: Boolean = false,
-    val shapeMessage: String? = null,
-    val shapeMessageIsError: Boolean = false,
 )
 
 class PorterViewModel(application: Application) : AndroidViewModel(application) {
+    companion object {
+        /** ZteSystemApps ids for the most recognisable, universally-known app glyphs, in preview priority order. */
+        private val previewAppPriority = listOf(
+            "settings", "phone", "gallery", "chrome", "music", "camera", "contacts", "calculator", "browser", "clock",
+        )
+
+        /** Common non-system apps recognisable enough for a preview, checked by exact package name. */
+        private val extraPreviewPackages = listOf("com.tencent.mm", "com.tencent.mobileqq")
+    }
+
     private val app get() = getApplication<Application>()
     private val prefs = PorterPreferences(application)
     private val mutableState = MutableStateFlow(
@@ -146,34 +147,6 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
     fun dismissCrash() {
         CrashLog.clear(app)
         mutableState.update { it.copy(lastCrash = null) }
-    }
-
-    fun refreshShapeStatus() {
-        viewModelScope.launch {
-            val status = withContext(Dispatchers.IO) { IconShapeSwitcher.status() }
-            mutableState.update { it.copy(shapeStatus = status) }
-        }
-    }
-
-    /** Switches the applied theme's icon shape through root, as the Themes app does for its built-in themes. */
-    fun applyShape(shape: IconShape) {
-        if (mutableState.value.shapeBusy) return
-        mutableState.update { it.copy(shapeBusy = true, shapeMessage = null) }
-        viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) { IconShapeSwitcher.apply(app, shape) }
-            val status = withContext(Dispatchers.IO) { IconShapeSwitcher.status() }
-            val theme = result.themeName
-            val (message, isError) = when {
-                result.error != null -> result.error to true
-                theme != null && !theme.startsWith(NebulaSpec.SHAPE_THEME_PREFIX) ->
-                    app.getString(R.string.shape_non_prefixed_warning, theme, NebulaSpec.SHAPE_THEME_PREFIX) to true
-                theme != null -> app.getString(R.string.shape_applied_to_theme, app.getString(shape.stringRes), theme) to false
-                else -> app.getString(R.string.shape_applied, app.getString(shape.stringRes)) to false
-            }
-            mutableState.update {
-                it.copy(shapeStatus = status, shapeBusy = false, shapeMessage = message, shapeMessageIsError = isError)
-            }
-        }
     }
 
     /** From the system file picker. Files on this phone's storage are read in place; anything else is copied first. */
@@ -236,11 +209,6 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
         mutableState.update { it.copy(outputDir = dir.absolutePath) }
     }
 
-    fun setStyle(style: ThemeStyle) {
-        updateOptions { it.copy(style = style) }
-        syncOutputName()
-    }
-    fun setShape(shape: IconShape) = updateOptions { it.copy(defaultShape = shape) }
     fun setFixedShape(shape: FixedIconShape) = updateOptions { it.copy(fixedShape = shape) }
     fun setFixedComposition(composition: FixedIconComposition) = updateOptions { it.copy(fixedComposition = composition) }
     fun setFixedIconScale(scale: Float) = updateOptions { it.copy(fixedIconScale = scale.coerceIn(0.25f, 1.25f)) }
@@ -251,7 +219,6 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
     fun setFixedTintSaturation(value: Float) = updateFixedTintHsv { it[1] = value.coerceIn(0f, 1f) }
     fun setFixedTintBrightness(value: Float) = updateFixedTintHsv { it[2] = value.coerceIn(0f, 1f) }
     fun setFixedBackgroundScale(scale: Float) = updateOptions { it.copy(fixedBackgroundScale = scale.coerceIn(0.35f, 1.25f)) }
-    fun setLayerMode(mode: LayerMode) = updateOptions { it.copy(layerMode = mode) }
     fun setPadBackground(color: Long) = updateOptions { it.copy(padBackground = color) }
     fun setOnlyInstalled(value: Boolean) = updateOptions { it.copy(onlyInstalledApps = value) }
     fun setGenerateDynamic(value: Boolean) = updateOptions { it.copy(generateMissingDynamicIcons = value) }
@@ -477,15 +444,18 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
 
     /** Five recognisable app types first, then ordinary imported icons as a fallback. */
     fun fixedPreviewIconChoices(): List<String> {
-        val common = listOf("settings", "camera", "phone", "dialer", "calculator", "chrome", "wechat", "music")
-        return source?.icons.orEmpty()
-            .distinctBy { it.id }
-            .sortedWith(compareBy<SourceIcon> { icon ->
-                val key = "${icon.key} ${icon.component?.packageName.orEmpty()}".lowercase(Locale.ROOT)
-                common.indexOfFirst { key.contains(it) }.let { if (it < 0) Int.MAX_VALUE else it }
-            }.thenBy { it.key })
-            .take(5)
-            .map { it.id }
+        val icons = source?.icons.orEmpty().distinctBy { it.id }
+        val byPackage = LinkedHashMap<String, SourceIcon>()
+        icons.forEach { icon -> byPackage.putIfAbsent((icon.component?.packageName ?: icon.key).lowercase(Locale.ROOT), icon) }
+
+        val picked = LinkedHashSet<String>()
+        previewAppPriority.forEach { id ->
+            val icon = ZteSystemApps.byId(id)?.aliases?.firstNotNullOfOrNull { byPackage[it.lowercase(Locale.ROOT)] }
+            if (icon != null) picked += icon.id
+        }
+        extraPreviewPackages.forEach { pkg -> byPackage[pkg]?.let { picked += it.id } }
+        if (picked.size < 5) icons.sortedBy { it.key }.forEach { icon -> if (picked.size < 5) picked += icon.id }
+        return picked.take(5).toList()
     }
 
     /** A disposable sample for the fixed-icon controls; callers own and recycle the returned bitmap. */
@@ -574,7 +544,7 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
                     visibleSystemApps = visibleSystemApps,
                     sourceWallpapers = opened.extras.wallpapers,
                     selectedWallpaperId = opened.extras.wallpaper,
-                    outputName = defaultOutputName(opened.suggestedLabel, base.options.style),
+                    outputName = defaultOutputName(opened.suggestedLabel),
                 )
                 replan()
                 refreshWallpaperVisual()
@@ -637,19 +607,16 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
         hasFileAccess = StorageAccess.hasAllFilesAccess(app),
         outputDir = prefs.outputDir.absolutePath,
         lastCrash = from.lastCrash,
-        shapeStatus = from.shapeStatus,
     )
 
     private fun syncOutputName() {
         if (outputNameEdited) return
-        mutableState.update { it.copy(outputName = defaultOutputName(it.labelZh.ifBlank { it.labelEn }, it.options.style)) }
+        mutableState.update { it.copy(outputName = defaultOutputName(it.labelZh.ifBlank { it.labelEn })) }
     }
 
-    /** Variable-shape themes need the default_theme_ prefix for the launcher to apply their shape masks. */
-    private fun defaultOutputName(label: String, style: ThemeStyle): String {
+    private fun defaultOutputName(label: String): String {
         val base = label.replace(Regex("[\\\\/:*?\"<>|.\\s]+"), "_").trim('_').ifBlank { "nebula_theme" }
-        val prefixed = if (style == ThemeStyle.ADAPTIVE && !base.startsWith(NebulaSpec.SHAPE_THEME_PREFIX)) NebulaSpec.SHAPE_THEME_PREFIX + base else base
-        return "$prefixed.zmtp"
+        return "$base.zmtp"
     }
 
     private fun normalizedOutputName(raw: String): String {
@@ -690,7 +657,6 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
         planner.plan(
             source.icons,
             state.assignments,
-            state.options.style,
             state.options.onlyInstalledApps,
             state.userAssignments,
             state.options.generateMissingAppIcons,
@@ -762,13 +728,4 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun Throwable.userMessage(): String = message?.takeIf(String::isNotBlank) ?: javaClass.simpleName
-
-    private val IconShape.stringRes: Int
-        get() = when (this) {
-            IconShape.CIRCLE -> R.string.shape_circle
-            IconShape.SQUIRCLE -> R.string.shape_squircle
-            IconShape.ROUNDED_SQUARE -> R.string.shape_rounded_square
-            IconShape.LEAF -> R.string.shape_leaf
-            IconShape.TEARDROP -> R.string.shape_teardrop
-        }
 }

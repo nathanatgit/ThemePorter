@@ -8,7 +8,7 @@ import org.xml.sax.InputSource
 
 /** Text files of a theme, matching the stock formatting closely enough that diffs against stock stay readable. */
 object ThemeXml {
-    fun description(meta: ThemeMetadata, style: ThemeStyle, defaultShape: IconShape): String = buildString {
+    fun description(meta: ThemeMetadata): String = buildString {
         append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<root>\n")
         item("id", meta.id)
         item("LockScreenWallpaperType", meta.lockScreenWallpaperType.toString())
@@ -22,13 +22,11 @@ object ThemeXml {
         item("classify-zh-rCN", "其它")
         item("classify-en", "Other")
         item("Theme Version", meta.version)
-        if (style == ThemeStyle.ADAPTIVE) item("defaultIconShape", defaultShape.configName)
         item("recompiled", "true")
-        if (style == ThemeStyle.ADAPTIVE) item("isSupportIconShapeChange", "true")
         append("</root>\n")
     }
 
-    fun shapeConfig(shape: IconShape): String =
+    fun shapeConfig(shape: IconMaskShape): String =
         "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<resources>\n" +
             "    <string name=\"config_icon_zte\" translatable=\"false\">\"${shape.svgPath}\"</string>\n" +
             "</resources>\n"
@@ -40,16 +38,6 @@ object ThemeXml {
             "    <item key=\"textColor\" value=\"${argbHex(style.textColor)}\" />\n" +
             "    <item key=\"textSize\" value=\"${style.textSize}\" />\n" +
             "</root>\n"
-
-    /** Lists layered icons as packageName/className stems, one line per icon (stock theme_info_icon.xml). */
-    fun iconInfo(componentStems: Collection<String>): String = buildString {
-        append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<root>\n")
-        componentStems.filter { '-' in it }.distinct().forEach { stem ->
-            append("    <item packageName=\"").append(escape(stem.substringBefore('-')))
-                .append("\" className=\"").append(escape(stem.substringAfter('-'))).append("\"/>\n")
-        }
-        append("</root>\n")
-    }
 
     /** overlapBg=1 makes the launcher draw themed icons over theme_bg_icon (community fixed-shape ports). */
     fun themeInfo(overlapBackground: Boolean): String =

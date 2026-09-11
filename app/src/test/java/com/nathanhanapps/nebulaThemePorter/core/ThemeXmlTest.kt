@@ -23,10 +23,10 @@ class ThemeXmlTest {
     }
 
     @Test
-    fun adaptiveDescriptionEnablesShapeSwitching() {
-        val values = items(ThemeXml.description(metadata, ThemeStyle.ADAPTIVE, IconShape.SQUIRCLE))
-        assertEquals("config_1", values["defaultIconShape"])
-        assertEquals("true", values["isSupportIconShapeChange"])
+    fun descriptionOmitsShapeSwitchingKeys() {
+        val values = items(ThemeXml.description(metadata))
+        assertFalse("defaultIconShape" in values)
+        assertFalse("isSupportIconShapeChange" in values)
         assertEquals("true", values["recompiled"])
         assertEquals("16.0.1", values["Theme Version"])
         assertEquals("1", values["LockScreenWallpaperType"])
@@ -34,17 +34,9 @@ class ThemeXmlTest {
     }
 
     @Test
-    fun fixedDescriptionOmitsShapeKeys() {
-        val values = items(ThemeXml.description(metadata, ThemeStyle.FIXED, IconShape.CIRCLE))
-        assertFalse("defaultIconShape" in values)
-        assertFalse("isSupportIconShapeChange" in values)
-        assertEquals("true", values["recompiled"])
-    }
-
-    @Test
     fun valuesAreEscaped() {
         val tricky = metadata.copy(labelEn = "A&B \"<x>\"", introEn = "line1\nline2")
-        val values = items(ThemeXml.description(tricky, ThemeStyle.ADAPTIVE, IconShape.CIRCLE))
+        val values = items(ThemeXml.description(tricky))
         assertEquals("A&B \"<x>\"", values["label-en"])
         assertEquals("line1\nline2", values["intro-en"])
     }
@@ -65,19 +57,9 @@ class ThemeXmlTest {
 
     @Test
     fun shapeConfigQuotesThePath() {
-        val xml = ThemeXml.shapeConfig(IconShape.CIRCLE)
-        assertTrue(xml.contains("<string name=\"config_icon_zte\" translatable=\"false\">\"M50,0A50,50,0,1,1,0,50,50,50,0,0,1,50,0Z\"</string>"))
+        val xml = ThemeXml.shapeConfig(FixedIconShape.CIRCLE)
+        assertTrue(xml.contains("<string name=\"config_icon_zte\" translatable=\"false\">\"${FixedIconShape.CIRCLE.svgPath}\"</string>"))
         SafeXml.parse(xml)
-    }
-
-    @Test
-    fun iconInfoSplitsComponentStems() {
-        val xml = ThemeXml.iconInfo(listOf("com_tencent_mm-com_tencent_mm_ui_LauncherUI", "com_tencent_mm", "com_tencent_mm-com_tencent_mm_ui_LauncherUI"))
-        val nodes = SafeXml.parse(xml).getElementsByTagName("item")
-        assertEquals(1, nodes.length)
-        val item = nodes.item(0) as Element
-        assertEquals("com_tencent_mm", item.getAttribute("packageName"))
-        assertEquals("com_tencent_mm_ui_LauncherUI", item.getAttribute("className"))
     }
 
     @Test(expected = IllegalArgumentException::class)
