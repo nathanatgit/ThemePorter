@@ -5,6 +5,8 @@ package com.nathanhanapps.nebulaThemePorter.ui
 import android.content.Context
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -52,6 +54,7 @@ import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -86,10 +89,12 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -114,6 +119,8 @@ import java.io.File
 import java.util.Locale
 import kotlin.math.roundToInt
 import androidx.core.graphics.ColorUtils
+
+private const val GITHUB_REPO_URL = "https://github.com/nathanatgit/ThemePorter"
 
 @Composable
 fun PorterApp(viewModel: PorterViewModel) {
@@ -338,7 +345,28 @@ private fun HomeScreen(
                     color = MaterialTheme.colorScheme.surfaceContainerLow,
                 ) {
                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(stringResource(R.string.private_by_design), style = MaterialTheme.typography.titleSmall)
+                        Row(
+                            modifier = Modifier.clickable {
+                                runCatching {
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(GITHUB_REPO_URL)))
+                                }
+                            },
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(
+                                stringResource(R.string.private_by_design),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                textDecoration = TextDecoration.Underline,
+                            )
+                            Icon(
+                                painter = painterResource(R.drawable.ic_github),
+                                contentDescription = stringResource(R.string.github_repo_link),
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
                         Hint(stringResource(R.string.offline_detail))
                         Hint(
                             if (state.hasFileAccess) {

@@ -30,6 +30,7 @@
     <string name="refresh">Refresh</string>
     <string name="open_themes_app">Open Themes app</string>
     <string name="private_by_design" translatable="false">Design by NathanHan</string>
+    <string name="github_repo_link" translatable="false">Source on GitHub</string>
     <string name="offline_detail">Works offline. Nothing is uploaded.</string>
     <string name="themes_save_to">Themes save to %1$s. You can change this before building.</string>
     <string name="save_then_apply">Save the result in Internal storage/Theme, then apply it from the Themes app.</string>
