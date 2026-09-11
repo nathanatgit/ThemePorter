@@ -1,0 +1,331 @@
+package com.nathanhanapps.nebulaThemePorter.core
+
+import java.util.Locale
+
+/**
+ * Archive layout of a NebulaAIOS theme (.zmtp), mapped from the stock default_theme_04/13/49/60 packages.
+ * docs/NEBULA_THEME_FORMAT.md records the evidence behind each value.
+ */
+object NebulaSpec {
+    const val DESCRIPTION = "description.xml"
+    const val WALLPAPER = "wallpaper/wallpaper1.jpg"
+    const val LOCKSCREEN_WALLPAPER = "lockscreen/wallpaper1.jpg"
+    const val ICONS_CUR = "overlays/com.zte.mifavor.launcher.resource/raw/icons_cur.zip"
+    const val ANDROIDZTE_SHAPE_CONFIG = "overlays/androidzte/res/values/config.xml"
+    val OVERLAY_APKS = listOf(
+        "overlays/androidzte/resources.apk",
+        "overlays/com.android.settings/resources.apk",
+        "overlays/com.android.systemui/resources.apk",
+    )
+
+    const val ICON_DIR = "icon/"
+    const val CALENDAR_INFO = "theme_info_dynamic_calendar.xml"
+    const val ICON_INFO = "theme_info_icon.xml"
+    const val THEME_INFO = "theme_info.xml"
+    const val SHORTCUT_BG = "theme_shortcut_bg_settings.png"
+    const val BG_ICON_LIGHT = "theme_bg_icon-0_65.png"
+    const val BG_ICON_DARK = "theme_bg_icon-66_100.png"
+    const val ICON_EFFECT_TOP = "theme_icon_effect_top.png"
+
+    const val SUFFIX_BACK = "_back"
+    const val SUFFIX_FRONT = "_front"
+    const val SUFFIX_SQUARE = "_square"
+
+    /**
+     * The theme name is the imported file's name without extension (system caches live in
+     * /data/resource-cache/cache/<name>). android.graphics.drawable.AdaptiveIconDrawableMifavor applies the
+     * config*.xml shape mask only when that name starts with this prefix; otherwise layered icons get the system
+     * default mask, while theme_* shape assets still switch.
+     */
+    const val SHAPE_THEME_PREFIX = "default_theme_"
+
+    const val THEME_VERSION = "16.0.1"
+    const val MAX_PREVIEWS = 6
+
+    const val WALLPAPER_WIDTH = 1216
+    const val WALLPAPER_HEIGHT = 2688
+    const val PREVIEW_WIDTH = 1080
+    const val PREVIEW_HEIGHT = 2400
+
+    /** Layered app icons (_back, _front, _square and the flat preview copy) in adaptive themes. */
+    const val LAYER_SIZE = 216
+
+    /** Masks, folder "+" tiles and one frame of the calendar and clock strips. */
+    const val ASSET_SIZE = 156
+
+    /** Flat app icons in fixed-shape themes. Stock uses 156; working ported themes ship 168 to 250. */
+    const val FIXED_ICON_SIZE = 192
+
+    /** Days 1..31, then the background tile. */
+    const val CALENDAR_FRAMES = 32
+
+    /** Hour hand, minute hand, dial. Hands are drawn pointing at 3 o'clock. */
+    const val CLOCK_FRAMES = 3
+
+    /**
+     * Icons com.zte.beautify draws on its theme card (string constants in the theme manager). Stock adaptive
+     * themes ship a flat copy and a _square copy of exactly these, in addition to the _back/_front layers.
+     */
+    val PREVIEW_STEMS: Set<String> = setOf(
+        "cn_nubia_notepad_preset-cn_nubia_notepad_NoteListActivity",
+        "cn_zte_recorder-cn_zte_recorder_RecordHomeActivity",
+        "com_android_calculator2-com_android_calculator2_Calculator",
+        "com_android_camera-com_android_camera_CameraLauncher",
+        "com_android_chrome-com_google_android_apps_chrome_Main",
+        "com_android_contacts-com_android_contacts_activities_DialtactsActivity",
+        "com_android_gallery3d-com_android_newgallery_NewGallery",
+        "com_android_settings-com_android_settings_Settings",
+        "com_google_android_apps_photos-com_google_android_apps_photos_home_HomeActivity",
+        "com_tencent_mm-com_tencent_mm_ui_LauncherUI",
+        "com_tencent_mobileqq-com_tencent_mobileqq_activity_SplashActivity",
+        "com_zte_heartyservice-com_zte_heartyservice_main_HeartServiceActivityLauncher",
+        "zte_com_cn_alarmclock-zte_com_cn_alarmclock_activity_AlarmClockActivity",
+        "zte_com_cn_filer-zte_com_cn_filer_FileMgrActivity",
+    )
+
+    fun previewPath(index: Int): String = String.format(Locale.ROOT, "preview/preview%02d.jpg", index)
+
+    fun iconEntry(fileName: String): String = ICON_DIR + fileName
+}
+
+enum class ThemeStyle {
+    /** Layered icons; the user can switch the icon shape after applying (stock 04, 13, 49). */
+    ADAPTIVE,
+
+    /** One flat PNG per app; the drawn shape is final (stock 60 and most community ports). */
+    FIXED,
+}
+
+/** The five shapes stock adaptive themes ship as config*.xml. The SVG paths use a 100x100 viewport. */
+/** A vector outline that can be rasterized into a fixed PNG or used as a launcher mask. */
+interface IconMaskShape {
+    val svgPath: String
+}
+
+enum class IconShape(
+    val configName: String,
+    val labelEn: String,
+    val labelZh: String,
+    override val svgPath: String,
+) : IconMaskShape {
+    CIRCLE(
+        "config",
+        "Circle",
+        "圆形",
+        "M50,0A50,50,0,1,1,0,50,50,50,0,0,1,50,0Z",
+    ),
+    SQUIRCLE(
+        "config_1",
+        "Squircle",
+        "圆角矩形",
+        "M25,100h0l-.9,0c-.47,0-1,0-1.45-.07l-.29,0-.56,0-.54-.06-.51-.06-.7-.1-.57-.09-.3-.06-.13,0A24.21,24.21,0,0,1," +
+            "5.5,91.32,26.15,26.15,0,0,1,.78,81.93,25.16,25.16,0,0,1,0,76V24.05a25.16,25.16,0,0,1,.77-6A26.15,26.15,0,0,1," +
+            "5.5,8.68a24.18,24.18,0,0,1,13.1-8l.58-.12.48-.09.39-.06.7-.1.51-.06L21.8.19l.56,0,.29,0c.49,0,1-.06,1.45-.07L25," +
+            "0H75c.71,0,1.54,0,2.35.1l.28,0,.57,0,.54.06.51.06.69.1.58.09.3.06.12,0A24.2,24.2,0,0,1,94.5,8.68a26,26,0,0,1," +
+            "4.71,9.39A24.39,24.39,0,0,1,100,24l0,.71v51a25.3,25.3,0,0,1-.78,6.25,26,26,0,0,1-4.71,9.39,24.18,24.18,0,0,1-" +
+            "13.1,8l-.58.12-.48.09-.4.06-.69.1-.51.06-.54.06-.57,0-.28,0c-.81,0-1.64.08-2.35.1H25Z",
+    ),
+    ROUNDED_SQUARE(
+        "config_2",
+        "Rounded square",
+        "大圆角",
+        "M42.8,0H57.2c13.36,0,19.34,1.61,25,4.65A31.65,31.65,0,0,1,95.35,17.79c3,5.67,4.65,11.65,4.65,25V57.2c0,13.36-" +
+            "1.61,19.34-4.65,25A31.65,31.65,0,0,1,82.21,95.35c-5.67,3-11.65,4.65-25,4.65H42.8c-13.36,0-19.34-1.61-25-4.65A" +
+            "31.65,31.65,0,0,1,4.65,82.21C1.61,76.54,0,70.56,0,57.2V42.8c0-13.36,1.61-19.34,4.65-25A31.65,31.65,0,0,1,17.79," +
+            "4.65C23.46,1.61,29.44,0,42.8,0Z",
+    ),
+    LEAF(
+        "config_3",
+        "Leaf",
+        "叶形",
+        "M16.72,0H57.2c13.36,0,19.34,1.61,25,4.65A31.65,31.65,0,0,1,95.35,17.79c3,5.67,4.65,11.65,4.65,25V83.28c0,5.81-" +
+            ".61,7.92-1.74,10a12,12,0,0,1-4.93,4.93c-2.13,1.13-4.24,1.74-10,1.74H42.8c-13.36,0-19.34-1.61-25-4.65A31.65," +
+            "31.65,0,0,1,4.65,82.21C1.61,76.54,0,70.56,0,57.2V16.72c0-5.81.61-7.92,1.74-10A12,12,0,0,1,6.67,1.74C8.8.61," +
+            "10.91,0,16.72,0Z",
+    ),
+    TEARDROP(
+        "config_4",
+        "Teardrop",
+        "水滴",
+        "M50,0a50,50,0,0,1,50,50V83.28c0,5.81-.61,7.92-1.74,10a12,12,0,0,1-4.93,4.93c-2.13,1.13-4.24,1.74-10,1.74H50A50," +
+            "50,0,0,1,50,0Z",
+    ),
+    ;
+
+    /** "" for config, "_1".."_4" for config_1..config_4. Every per-shape asset uses the same suffix. */
+    val variantSuffix: String get() = configName.removePrefix("config")
+}
+
+/**
+ * Shapes baked into fixed icons. Unlike [IconShape], these are not sent to the system or restricted by its five
+ * config names: the porter clips the final PNG before it goes into the theme archive.
+ *
+ * Most of these match androidx.compose.material3.MaterialShapes (Apache 2.0): vertex offsets, corner-rounding
+ * radii and the mirror/repeat layout are read from its source, then rendered into flat 100x100 cubic-Bezier
+ * paths here (rounding approximated as a per-corner cubic, since the app has no runtime dependency on that
+ * library's RoundedPolygon renderer). [SAMSUNG_SQUIRCLE] and [IOS_SQUIRCLE] instead sample a superellipse
+ * (|x|^n + |y|^n = 1) at two different exponents, matching how those platforms' own icon masks are usually
+ * approximated.
+ */
+enum class FixedIconShape(
+    val labelEn: String,
+    val labelZh: String,
+    override val svgPath: String,
+) : IconMaskShape {
+    NONE("None", "无（保留原图）", ""),
+    CIRCLE(
+        "Circle",
+        "圆形",
+        "M34.55,2.45L34.55,2.45C43.08,-0.33,56.92,-0.33,65.45,2.45L65.45,2.45C73.98,5.22,85.18,13.35,90.45,20.61L90.45,20.61C95.72,27.87,100.00,41.03,100.00,50.00L100.00,50.00C100.00,58.97,95.72,72.13,90.45,79.39L90.45,79.39C85.18,86.65,73.98,94.78,65.45,97.55L65.45,97.55C56.92,100.33,43.08,100.33,34.55,97.55L34.55,97.55C26.02,94.78,14.82,86.65,9.55,79.39L9.55,79.39C4.28,72.13,0.00,58.97,0.00,50.00L0.00,50.00C0.00,41.03,4.28,27.87,9.55,20.61L9.55,20.61C14.82,13.35,26.02,5.22,34.55,2.45Z",
+    ),
+    SQUARE(
+        "Square",
+        "方形",
+        "M30.00,0.00L70.00,0.00C86.57,0.00,100.00,13.43,100.00,30.00L100.00,70.00C100.00,86.57,86.57,100.00,70.00,100.00L30.00,100.00C13.43,100.00,0.00,86.57,0.00,70.00L0.00,30.00C0.00,13.43,13.43,0.00,30.00,0.00Z",
+    ),
+    SAMSUNG_SQUIRCLE(
+        "Samsung Squircle",
+        "三星方圆形",
+        "M99.83,40.48L100.00,50.00L99.83,59.52L99.31,65.56L98.45,70.67L97.25,75.18L95.71,79.22L93.82,82.86L91.60,86.12L89.04,89.04L86.12,91.60L82.86,93.82L79.22,95.71L75.18,97.25L70.67,98.45L65.56,99.31L59.52,99.83L50.00,100.00L40.48,99.83L34.44,99.31L29.33,98.45L24.82,97.25L20.78,95.71L17.14,93.82L13.88,91.60L10.96,89.04L8.40,86.12L6.18,82.86L4.29,79.22L2.75,75.18L1.55,70.67L0.69,65.56L0.17,59.52L0.00,50.00L0.17,40.48L0.69,34.44L1.55,29.33L2.75,24.82L4.29,20.78L6.18,17.14L8.40,13.88L10.96,10.96L13.88,8.40L17.14,6.18L20.78,4.29L24.82,2.75L29.33,1.55L34.44,0.69L40.48,0.17L50.00,0.00L59.52,0.17L65.56,0.69L70.67,1.55L75.18,2.75L79.22,4.29L82.86,6.18L86.12,8.40L89.04,10.96L91.60,13.88L93.82,17.14L95.71,20.78L97.25,24.82L98.45,29.33L99.31,34.44L99.83,40.48Z",
+    ),
+    IOS_SQUIRCLE(
+        "iOS Squircle",
+        "iOS 连续圆角形",
+        "M99.90,30.25L100.00,50.00L99.90,69.75L99.61,76.01L99.13,80.49L98.44,84.05L97.55,87.01L96.44,89.52L95.11,91.68L93.53,93.53L91.68,95.11L89.52,96.44L87.01,97.55L84.05,98.44L80.49,99.13L76.01,99.61L69.75,99.90L50.00,100.00L30.25,99.90L23.99,99.61L19.51,99.13L15.95,98.44L12.99,97.55L10.48,96.44L8.32,95.11L6.47,93.53L4.89,91.68L3.56,89.52L2.45,87.01L1.56,84.05L0.87,80.49L0.39,76.01L0.10,69.75L0.00,50.00L0.10,30.25L0.39,23.99L0.87,19.51L1.56,15.95L2.45,12.99L3.56,10.48L4.89,8.32L6.47,6.47L8.32,4.89L10.48,3.56L12.99,2.45L15.95,1.56L19.51,0.87L23.99,0.39L30.25,0.10L50.00,0.00L69.75,0.10L76.01,0.39L80.49,0.87L84.05,1.56L87.01,2.45L89.52,3.56L91.68,4.89L93.53,6.47L95.11,8.32L96.44,10.48L97.55,12.99L98.44,15.95L99.13,19.51L99.61,23.99L99.90,30.25Z",
+    ),
+    SLANTED(
+        "Slanted",
+        "斜切形",
+        "M0.76,78.00L18.68,22.00C21.11,14.43,27.56,9.72,35.50,9.72L90.28,9.72C98.22,9.72,101.66,14.43,99.24,22.00L81.32,78.00C78.89,85.57,72.44,90.28,64.50,90.28L9.72,90.28C1.78,90.28,-1.66,85.57,0.76,78.00Z",
+    ),
+    FAN(
+        "Fan",
+        "扇形",
+        "M99.08,50.87L99.99,85.17C100.27,95.98,96.39,99.97,85.58,99.97L15.10,99.97C6.76,99.97,0.00,93.21,0.00,84.87L0.00,14.48C0.00,6.31,6.62,-0.16,14.79,0.03L48.89,0.84C75.89,1.47,98.36,23.87,99.08,50.87Z",
+    ),
+    PENTAGON(
+        "Pentagon",
+        "五边形",
+        "M9.41,25.49L35.59,7.01C43.55,1.39,56.45,1.39,64.41,7.01L90.59,25.49C98.18,30.84,101.95,42.32,99.01,51.13L89.11,80.77C86.08,89.85,75.87,97.20,66.30,97.20L33.70,97.20C24.13,97.20,13.92,89.85,10.89,80.77L0.99,51.13C-1.95,42.32,1.82,30.84,9.41,25.49Z",
+    ),
+    GEM(
+        "Gem",
+        "宝石形",
+        "M81.81,88.93L72.11,93.33C52.47,102.24,47.38,102.23,27.77,93.25L18.09,88.81C7.53,83.97,0.33,70.73,2.01,59.24L3.62,48.22C5.41,35.98,15.00,20.23,25.05,13.03L37.67,3.99C40.75,1.78,46.33,-0.01,50.12,0.00L50.12,0.00C53.91,0.01,59.48,1.81,62.56,4.04L75.13,13.12C85.16,20.36,94.69,36.15,96.43,48.40L98.00,59.43C99.63,70.92,92.39,84.13,81.81,88.93Z",
+    ),
+    SUNNY(
+        "Sunny",
+        "太阳形",
+        "M41.71,2.93L41.71,2.93C46.29,-0.98,53.71,-0.98,58.29,2.93L58.29,2.93C62.86,6.83,71.43,10.38,77.43,10.85L77.43,10.85C83.42,11.33,88.67,16.58,89.15,22.57L89.15,22.57C89.62,28.57,93.17,37.14,97.07,41.71L97.07,41.71C100.98,46.29,100.98,53.71,97.07,58.29L97.07,58.29C93.17,62.86,89.62,71.43,89.15,77.43L89.15,77.43C88.67,83.42,83.42,88.67,77.43,89.15L77.43,89.15C71.43,89.62,62.86,93.17,58.29,97.07L58.29,97.07C53.71,100.98,46.29,100.98,41.71,97.07L41.71,97.07C37.14,93.17,28.57,89.62,22.57,89.15L22.57,89.15C16.58,88.67,11.33,83.42,10.85,77.43L10.85,77.43C10.38,71.43,6.83,62.86,2.93,58.29L2.93,58.29C-0.98,53.71,-0.98,46.29,2.93,41.71L2.93,41.71C6.83,37.14,10.38,28.57,10.85,22.57L10.85,22.57C11.33,16.58,16.58,11.33,22.57,10.85L22.57,10.85C28.57,10.38,37.14,6.83,41.71,2.93Z",
+    ),
+    COOKIE_6(
+        "6-Sided Cookie",
+        "六角曲奇",
+        "M84.57,81.85L84.57,81.85C76.96,84.03,66.17,90.25,60.47,95.74L60.32,95.88C54.62,101.38,45.39,101.37,39.70,95.87L39.70,95.87C34.01,90.36,23.23,84.12,15.62,81.94L15.42,81.88C7.81,79.69,3.21,71.69,5.13,64.01L5.13,64.01C7.05,56.33,7.06,43.88,5.15,36.19L5.10,36.00C3.19,28.31,7.82,20.32,15.43,18.15L15.43,18.15C23.04,15.97,33.83,9.75,39.53,4.26L39.68,4.12C45.38,-1.38,54.61,-1.37,60.30,4.13L60.30,4.13C65.99,9.64,76.77,15.88,84.38,18.06L84.58,18.12C92.19,20.31,96.79,28.31,94.87,35.99L94.87,35.99C92.95,43.67,92.94,56.12,94.85,63.81L94.90,64.00C96.81,71.69,92.18,79.68,84.57,81.85Z",
+    ),
+    COOKIE_9(
+        "9-Sided Cookie",
+        "九角曲奇",
+        "M42.54,3.39L42.54,3.39C46.66,-0.35,53.34,-0.35,57.46,3.39L57.46,3.39C61.59,7.13,69.44,9.99,75.00,9.77L75.00,9.77C80.56,9.56,85.68,13.85,86.43,19.37L86.43,19.37C87.19,24.88,91.36,32.12,95.76,35.53L95.76,35.53C100.16,38.94,101.32,45.52,98.36,50.23L98.36,50.23C95.39,54.94,93.94,63.16,95.12,68.60L95.12,68.60C96.29,74.04,92.95,79.83,87.65,81.53L87.65,81.53C82.35,83.23,75.95,88.60,73.36,93.53L73.36,93.53C70.76,98.45,64.48,100.74,59.33,98.63L59.33,98.63C54.18,96.53,45.82,96.53,40.67,98.63L40.67,98.63C35.52,100.74,29.24,98.45,26.64,93.53L26.64,93.53C24.05,88.60,17.65,83.23,12.35,81.53L12.35,81.53C7.05,79.83,3.71,74.04,4.88,68.60L4.88,68.60C6.06,63.16,4.61,54.94,1.64,50.23L1.64,50.23C-1.32,45.52,-0.16,38.94,4.24,35.53L4.24,35.53C8.64,32.12,12.81,24.88,13.57,19.37L13.57,19.37C14.32,13.85,19.44,9.56,25.00,9.77L25.00,9.77C30.56,9.99,38.41,7.13,42.54,3.39Z",
+    ),
+    COOKIE_12(
+        "12-Sided Cookie",
+        "十二角曲奇",
+        "M44.45,2.52L44.45,2.52C47.52,-0.84,52.48,-0.84,55.55,2.52L55.55,2.52C58.61,5.88,64.60,7.49,68.94,6.11L68.94,6.11C73.27,4.73,77.57,7.21,78.54,11.65L78.54,11.65C79.51,16.10,83.90,20.49,88.35,21.46L88.35,21.46C92.79,22.43,95.27,26.73,93.89,31.06L93.89,31.06C92.51,35.40,94.12,41.39,97.48,44.45L97.48,44.45C100.84,47.52,100.84,52.48,97.48,55.55L97.48,55.55C94.12,58.61,92.51,64.60,93.89,68.94L93.89,68.94C95.27,73.27,92.79,77.57,88.35,78.54L88.35,78.54C83.90,79.51,79.51,83.90,78.54,88.35L78.54,88.35C77.57,92.79,73.27,95.27,68.94,93.89L68.94,93.89C64.60,92.51,58.61,94.12,55.55,97.48L55.55,97.48C52.48,100.84,47.52,100.84,44.45,97.48L44.45,97.48C41.39,94.12,35.40,92.51,31.06,93.89L31.06,93.89C26.73,95.27,22.43,92.79,21.46,88.35L21.46,88.35C20.49,83.90,16.10,79.51,11.65,78.54L11.65,78.54C7.21,77.57,4.73,73.27,6.11,68.94L6.11,68.94C7.49,64.60,5.88,58.61,2.52,55.55L2.52,55.55C-0.84,52.48,-0.84,47.52,2.52,44.45L2.52,44.45C5.88,41.39,7.49,35.40,6.11,31.06L6.11,31.06C4.73,26.73,7.21,22.43,11.65,21.46L11.65,21.46C16.10,20.49,20.49,16.10,21.46,11.65L21.46,11.65C22.43,7.21,26.73,4.73,31.06,6.11L31.06,6.11C35.40,7.49,41.39,5.88,44.45,2.52Z",
+    ),
+    CLOVER_4(
+        "4-Leaf Clover",
+        "四叶草",
+        "M62.30,40.65L56.64,43.36L59.35,37.70L63.53,33.02L68.86,29.70L74.90,28.00L81.17,28.07L87.18,29.89L92.43,33.31L96.52,38.07L99.11,43.79L100.00,50.00L99.11,56.21L96.52,61.93L92.43,66.69L87.18,70.11L81.17,71.93L74.90,72.00L68.86,70.30L63.53,66.98L59.35,62.30L56.64,56.64L62.30,59.35L66.98,63.53L70.30,68.86L72.00,74.90L71.93,81.17L70.11,87.18L66.69,92.43L61.93,96.52L56.21,99.11L50.00,100.00L43.79,99.11L38.07,96.52L33.31,92.43L29.89,87.18L28.07,81.17L28.00,74.90L29.70,68.86L33.02,63.53L37.70,59.35L43.36,56.64L40.65,62.30L36.47,66.98L31.14,70.30L25.10,72.00L18.83,71.93L12.82,70.11L7.57,66.69L3.48,61.93L0.89,56.21L0.00,50.00L0.89,43.79L3.48,38.07L7.57,33.31L12.82,29.89L18.83,28.07L25.10,28.00L31.14,29.70L36.47,33.02L40.65,37.70L43.36,43.36L37.70,40.65L33.02,36.47L29.70,31.14L28.00,25.10L28.07,18.83L29.89,12.82L33.31,7.57L38.07,3.48L43.79,0.89L50.00,0.00L56.21,0.89L61.93,3.48L66.69,7.57L70.11,12.82L71.93,18.83L72.00,25.10L70.30,31.14L66.98,36.47L62.30,40.65Z",
+    ),
+    CLOVER_8(
+        "8-Leaf Clover",
+        "八叶草",
+        "M39.05,1.62L50.00,8.09L62.06,1.69C68.27,-1.61,74.72,1.24,76.47,8.04L79.63,20.37L92.69,24.37C99.41,26.43,101.96,33.00,98.38,39.05L91.91,50.00L98.31,62.06C101.61,68.27,98.76,74.72,91.96,76.47L79.63,79.63L75.63,92.69C73.57,99.41,67.00,101.96,60.95,98.38L50.00,91.91L37.94,98.31C31.73,101.61,25.28,98.76,23.53,91.96L20.37,79.63L7.31,75.63C0.59,73.57,-1.96,67.00,1.62,60.95L8.09,50.00L1.69,37.94C-1.61,31.73,1.24,25.28,8.04,23.53L20.37,20.37L24.37,7.31C26.43,0.59,33.00,-1.96,39.05,1.62Z",
+    ),
+    SOFT_BURST(
+        "Soft Burst",
+        "柔光爆裂形",
+        "M4.94,32.61L15.80,29.93C18.51,29.27,20.54,26.47,20.32,23.68L19.47,12.58C19.26,9.80,21.18,8.40,23.77,9.45L34.13,13.66C36.71,14.72,40.00,13.64,41.46,11.26L47.30,1.79C48.76,-0.59,51.14,-0.60,52.62,1.78L58.52,11.27C59.99,13.64,63.28,14.71,65.86,13.64L76.15,9.41C78.73,8.34,80.66,9.74,80.46,12.52L79.65,23.67C79.45,26.46,81.49,29.25,84.20,29.91L95.02,32.53C97.73,33.19,98.47,35.45,96.67,37.59L89.46,46.13C87.66,48.27,87.67,51.72,89.48,53.85L96.69,62.33C98.50,64.45,97.77,66.72,95.06,67.39L84.20,70.07C81.49,70.73,79.46,73.53,79.68,76.32L80.53,87.42C80.74,90.20,78.82,91.60,76.23,90.55L65.87,86.34C63.29,85.28,60.00,86.36,58.54,88.74L52.70,98.21C51.24,100.59,48.86,100.60,47.38,98.22L41.48,88.73C40.01,86.36,36.72,85.29,34.14,86.36L23.85,90.59C21.27,91.66,19.34,90.26,19.54,87.48L20.35,76.33C20.55,73.54,18.51,70.75,15.80,70.09L4.98,67.47C2.27,66.81,1.53,64.55,3.33,62.41L10.54,53.87C12.34,51.73,12.33,48.28,10.52,46.15L3.31,37.67C1.50,35.55,2.23,33.28,4.94,32.61Z",
+    ),
+    FLOWER(
+        "Flower",
+        "花形",
+        "M27.48,13.91L36.97,18.64L40.33,8.58C41.02,6.50,43.00,3.73,44.74,2.41L46.26,1.25C47.16,0.56,48.82,0.00,49.95,0.00L49.95,0.00C51.09,-0.00,52.74,0.55,53.65,1.24L55.17,2.40C56.91,3.72,58.89,6.48,59.59,8.56L62.97,18.61L72.45,13.87C74.41,12.89,77.76,12.33,79.93,12.63L81.83,12.88C82.95,13.03,84.52,13.81,85.32,14.61L85.32,14.61C86.13,15.41,86.90,16.98,87.06,18.10L87.32,19.99C87.61,22.17,87.06,25.52,86.09,27.48L81.36,36.97L91.42,40.33C93.50,41.02,96.27,43.00,97.59,44.74L98.75,46.26C99.44,47.16,100.00,48.82,100.00,49.95L100.00,49.95C100.00,51.09,99.45,52.74,98.76,53.65L97.60,55.17C96.28,56.91,93.52,58.89,91.44,59.59L81.39,62.97L86.13,72.45C87.11,74.41,87.67,77.76,87.37,79.93L87.12,81.83C86.97,82.95,86.19,84.52,85.39,85.32L85.39,85.32C84.59,86.13,83.02,86.90,81.90,87.06L80.01,87.32C77.83,87.61,74.48,87.06,72.52,86.09L63.03,81.36L59.67,91.42C58.98,93.50,57.00,96.27,55.26,97.59L53.74,98.75C52.84,99.44,51.18,100.00,50.05,100.00L50.05,100.00C48.91,100.00,47.26,99.45,46.35,98.76L44.83,97.60C43.09,96.28,41.11,93.52,40.41,91.44L37.03,81.39L27.55,86.13C25.59,87.11,22.24,87.67,20.07,87.37L18.17,87.12C17.05,86.97,15.48,86.19,14.68,85.39L14.68,85.39C13.87,84.59,13.10,83.02,12.94,81.90L12.68,80.01C12.39,77.83,12.94,74.48,13.91,72.52L18.64,63.03L8.58,59.67C6.50,58.98,3.73,57.00,2.41,55.26L1.25,53.74C0.56,52.84,0.00,51.18,0.00,50.05L0.00,50.05C-0.00,48.91,0.55,47.26,1.24,46.35L2.40,44.83C3.72,43.09,6.48,41.11,8.56,40.41L18.61,37.03L13.87,27.55C12.89,25.59,12.33,22.24,12.63,20.07L12.88,18.17C13.03,17.05,13.81,15.48,14.61,14.68L14.61,14.68C15.41,13.87,16.98,13.10,18.10,12.94L19.99,12.68C22.17,12.39,25.52,12.94,27.48,13.91Z",
+    ),
+    GHOSTISH(
+        "Ghostish",
+        "幽灵形",
+        "M26.28,0.00L26.28,0.00C39.38,0.00,60.62,0.00,73.72,0.00L73.72,0.00C86.82,0.00,97.43,10.62,97.43,23.72L97.43,85.14C97.43,98.89,89.32,103.68,77.27,97.05L63.35,89.38C59.91,87.49,53.93,85.95,50.00,85.95L50.00,85.95C46.07,85.95,40.09,87.49,36.65,89.38L22.73,97.05C10.68,103.68,2.57,98.89,2.57,85.14L2.57,23.72C2.57,10.62,13.18,0.00,26.28,0.00Z",
+    ),
+    PIXEL_CIRCLE(
+        "Pixel Circle",
+        "像素圆形",
+        "M29.60,0.00L50.00,0.00L70.40,0.00L70.40,6.50L84.30,6.50L84.30,14.80L92.60,14.80L92.60,29.60L100.00,29.60L100.00,70.40L92.60,70.40L92.60,85.20L84.30,85.20L84.30,93.50L70.40,93.50L70.40,100.00L50.00,100.00L29.60,100.00L29.60,93.50L15.70,93.50L15.70,85.20L7.40,85.20L7.40,70.40L0.00,70.40L0.00,29.60L7.40,29.60L7.40,14.80L15.70,14.80L15.70,6.50L29.60,6.50L29.60,0.00Z",
+    ),
+    HEART(
+        "Heart",
+        "心形",
+        "M34.88,10.96L40.12,15.11C45.58,19.43,54.42,19.43,59.88,15.11L65.12,10.96C73.47,4.35,86.20,5.23,93.56,12.92L94.09,13.48C101.75,21.48,102.00,34.69,94.67,42.98L50.00,93.47L5.33,42.98C-2.00,34.69,-1.75,21.48,5.91,13.48L6.44,12.92C13.80,5.23,26.53,4.35,34.88,10.96Z",
+    ),
+    ;
+
+    val isOriginal: Boolean get() = this == NONE
+}
+
+/** Launcher assets that exist once per shape in adaptive themes and once in fixed-shape themes. */
+enum class ShapeAsset(val baseName: String) {
+    MASK("theme_mask_icon"),
+    FOLDER_ICON("theme_folder_icon"),
+    FOLDER_ADD("theme_folder_add"),
+    DYNAMIC_CALENDAR("theme_dynamic_calendar"),
+    DYNAMIC_CLOCK("theme_dynamic_clock"),
+    ;
+
+    fun fileName(style: ThemeStyle, shape: IconMaskShape): String = when (style) {
+        ThemeStyle.ADAPTIVE -> {
+            require(shape is IconShape) { "Adaptive assets require one of the launcher config shapes" }
+            "${baseName}_config${shape.variantSuffix}.png"
+        }
+        ThemeStyle.FIXED -> "$baseName.png"
+    }
+}
+
+object ThemeLayout {
+    fun shapes(style: ThemeStyle, defaultShape: IconShape): List<IconShape> = when (style) {
+        ThemeStyle.ADAPTIVE -> IconShape.entries
+        ThemeStyle.FIXED -> listOf(defaultShape)
+    }
+
+    fun configFileName(style: ThemeStyle, shape: IconShape): String = when (style) {
+        ThemeStyle.ADAPTIVE -> "${shape.configName}.xml"
+        ThemeStyle.FIXED -> "config.xml"
+    }
+
+    /** Names of the non-app files in icon/ for a configuration. */
+    fun specialFiles(
+        style: ThemeStyle,
+        defaultShape: IconShape,
+        assets: Set<ShapeAsset>,
+        includeIconInfo: Boolean,
+        includeShortcutBackground: Boolean = true,
+        includeBackgroundIcons: Boolean = true,
+        includeEffectTop: Boolean = false,
+        includeThemeInfo: Boolean = false,
+    ): List<String> = buildList {
+        val shapes = shapes(style, defaultShape)
+        shapes.forEach { add(configFileName(style, it)) }
+        ShapeAsset.entries.filter { it in assets }.forEach { asset ->
+            shapes.forEach { add(asset.fileName(style, it)) }
+        }
+        if (ShapeAsset.DYNAMIC_CALENDAR in assets) add(NebulaSpec.CALENDAR_INFO)
+        if (includeIconInfo) add(NebulaSpec.ICON_INFO)
+        if (includeThemeInfo) add(NebulaSpec.THEME_INFO)
+        if (includeShortcutBackground) add(NebulaSpec.SHORTCUT_BG)
+        if (includeBackgroundIcons) {
+            add(NebulaSpec.BG_ICON_LIGHT)
+            add(NebulaSpec.BG_ICON_DARK)
+        }
+        if (includeEffectTop) add(NebulaSpec.ICON_EFFECT_TOP)
+    }
+}

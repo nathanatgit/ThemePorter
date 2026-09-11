@@ -1,0 +1,17 @@
+*.iml
+.gradle/
+.idea/
+/local.properties
+/.kotlin/
+/build/
+**/build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.zip
+/tmp/
+
+# Stock NebulaAIOS overlay packages copied into generated themes
+!app/src/main/assets/overlays/**/resources.apk

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Back layer tile -->
+    <path
+        android:fillColor="#66FFFFFF"
+        android:pathData="M34,30h32a8,8 0,0 1,8 8v32a8,8 0,0 1,-8 8h-32a8,8 0,0 1,-8 -8v-32a8,8 0,0 1,8 -8z" />
+    <!-- Front layer circle, offset to suggest re-shaping -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M60,48m-18,0a18,18 0,1 1,36 0a18,18 0,1 1,-36 0" />
+    <path
+        android:fillColor="#FF3E6CF0"
+        android:pathData="M53,40h5l8,11v-11h5v18h-5l-8,-11v11h-5z" />
+</vector>
