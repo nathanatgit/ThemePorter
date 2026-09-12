@@ -6,6 +6,8 @@ import androidx.activity.ComponentActivity
 import androidx.lifecycle.lifecycleScope
 import com.nathanhanapps.nebulaThemePorter.build.ThemeBuilder
 import com.nathanhanapps.nebulaThemePorter.core.BuildOptions
+import com.nathanhanapps.nebulaThemePorter.core.FixedIconComposition
+import com.nathanhanapps.nebulaThemePorter.core.FixedIconShape
 import com.nathanhanapps.nebulaThemePorter.core.IconPlanner
 import com.nathanhanapps.nebulaThemePorter.core.StockComponentIndex
 import com.nathanhanapps.nebulaThemePorter.core.ThemeMetadata
@@ -37,6 +39,8 @@ class DebugBuildActivity : ComponentActivity() {
             return
         }
         val onlyInstalled = intent.getBooleanExtra("onlyInstalled", true)
+        val shape = intent.getStringExtra("shape")?.let { runCatching { FixedIconShape.valueOf(it) }.getOrNull() } ?: FixedIconShape.NONE
+        val composition = intent.getStringExtra("composition")?.let { runCatching { FixedIconComposition.valueOf(it) }.getOrNull() } ?: FixedIconComposition.OVERLAY
         status.writeText("RUNNING\n")
 
         lifecycleScope.launch {
@@ -48,7 +52,7 @@ class DebugBuildActivity : ComponentActivity() {
                 source.use { src ->
                     val stock = StockComponentIndex.parse(assets.open("stock_components.txt").bufferedReader().use { it.readText() })
                     val planner = IconPlanner(stock, InstalledApps.launcherActivities(this@DebugBuildActivity))
-                    val options = BuildOptions(onlyInstalledApps = onlyInstalled)
+                    val options = BuildOptions(onlyInstalledApps = onlyInstalled, fixedShape = shape, fixedComposition = composition)
                     val assignments = planner.autoAssignSystemApps(src.icons)
                     val plan = planner.plan(src.icons, assignments, onlyInstalled)
                     notes.append("plan sources=${src.icons.size} images=${plan.icons.map { it.sourceId }.toSet().size} names=${plan.icons.size}\n")

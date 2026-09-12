@@ -56,7 +56,7 @@
     <string name="fixed_shape_none">无</string>
     <string name="fixed_original_detail">保留导入 PNG 原有的轮廓和透明区域，不添加固定形状或底板。</string>
     <string name="fixed_shape_rendered_detail">此形状会预绘制到每个固定应用图标 PNG 中。</string>
-    <string name="fixed_icon_composition">固定图标合成</string>
+    <string name="fixed_icon_composition">图标合成</string>
     <string name="fixed_icon_preview">固定图标预览</string>
     <string name="fixed_icon_preview_pick">预览图标</string>
     <string name="fixed_icon_preview_pick_detail">优先显示 5 个常用导入图标；点击 + 可从所有导入图标中挑选，仅影响此预览。</string>
@@ -121,7 +121,7 @@
     <string name="gradient_random_detail">可自行选择或修改三种颜色；“随机颜色位置”只改变它们出现的位置，不会改变配色。</string>
     <string name="manual_replacement">手动替换</string>
     <string name="system_apps">系统应用</string>
-    <string name="system_apps_detail">仅显示当前已安装且在启动器中可见的应用，点击可替换建议图标。</string>
+    <string name="system_apps_detail">仅显示当前已安装且在启动器中可见的应用，点击可替换建议图标；长按可批量调整灰度对比度。</string>
     <string name="no_visible_system_apps">当前没有已安装且在启动器中可见的受支持系统应用。</string>
     <string name="user_apps">用户应用</string>
     <string name="user_apps_folded_detail">点击后加载已安装且在启动器中可见的用户应用。</string>
@@ -133,6 +133,16 @@
     <string name="no_source_icon">源文件中无匹配图标</string>
     <string name="fallback_device_icon">回退：应用自身图标</string>
     <string name="manual_override">已手动替换</string>
+    <plurals name="icons_selected_count">
+        <item quantity="other">已选择 %d 项</item>
+    </plurals>
+    <string name="icon_contrast">色调曲线</string>
+    <string name="icon_contrast_detail">让所选图标在着色后的明暗观感更一致，效果作用于着色之前。点击空白处添加控制点，拖动控制点调整，长按可删除。</string>
+    <string name="normalize">对齐明暗</string>
+    <string name="normalize_detail">按各自所需的幅度分别偏移每个所选图标，使其平均明暗一致，而不是对所有图标套用同一条曲线。</string>
+    <string name="reset">重置</string>
+    <string name="dynamic_icon_preview">日历和时钟预览</string>
+    <string name="dynamic_icon_preview_detail">日历和时钟会自动套用与其他图标相同的着色，这是效果预览。</string>
     <string name="icon_pack_caps">图标包</string>
     <string name="miui_theme_caps">MIUI 主题</string>
     <plurals name="image_count">

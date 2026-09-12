@@ -57,7 +57,7 @@
     <string name="fixed_shape_none">None</string>
     <string name="fixed_original_detail">Keep the imported PNG’s original outline and transparency. No fixed shape or plate is added.</string>
     <string name="fixed_shape_rendered_detail">This shape is baked into every fixed app-icon PNG.</string>
-    <string name="fixed_icon_composition">Fixed icon composition</string>
+    <string name="fixed_icon_composition">Icon composition</string>
     <string name="fixed_icon_preview">Fixed icon preview</string>
     <string name="fixed_icon_preview_pick">Preview icon</string>
     <string name="fixed_icon_preview_pick_detail">Five common imported icons are shown first. Use + to choose any imported icon for this preview only.</string>
@@ -123,7 +123,7 @@
     <string name="gradient_random_detail">Choose or change the three colors yourself. Randomize placement changes only where those colors appear.</string>
     <string name="manual_replacement">Manual replacement</string>
     <string name="system_apps">System apps</string>
-    <string name="system_apps_detail">Installed apps that are visible in the launcher. Tap one to replace its suggested icon.</string>
+    <string name="system_apps_detail">Installed apps that are visible in the launcher. Tap one to replace its suggested icon; long-press one to batch-edit grayscale contrast.</string>
     <string name="no_visible_system_apps">No supported system apps are currently installed and visible in the launcher.</string>
     <string name="user_apps">User apps</string>
     <string name="user_apps_folded_detail">Tap to load installed user apps that are visible in the launcher.</string>
@@ -136,6 +136,17 @@
     <string name="no_source_icon">No matching source icon</string>
     <string name="fallback_device_icon">Fallback: app\'s own icon</string>
     <string name="manual_override">Manual override</string>
+    <plurals name="icons_selected_count">
+        <item quantity="one">%d selected</item>
+        <item quantity="other">%d selected</item>
+    </plurals>
+    <string name="icon_contrast">Tone curve</string>
+    <string name="icon_contrast_detail">Evens out how light or dark the selected icons look once tinted. Tap to add a point, drag a point to move it, long-press to remove it. Applied before the icon tint.</string>
+    <string name="normalize">Normalize</string>
+    <string name="normalize_detail">Shifts each selected icon by its own amount so they share the same average brightness, instead of one curve applied identically to all of them.</string>
+    <string name="reset">Reset</string>
+    <string name="dynamic_icon_preview">Calendar &amp; clock preview</string>
+    <string name="dynamic_icon_preview_detail">Calendar and clock always get the same tint as every other icon. This is what that looks like.</string>
     <string name="icon_pack_caps">ICON PACK</string>
     <string name="miui_theme_caps">MIUI THEME</string>
     <plurals name="image_count">

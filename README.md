@@ -35,8 +35,10 @@ The result is a `.zmtp` file you apply from the phone's built-in **Themes** app,
 - **Background tint and icon tint** — pick a color from the current wallpaper's palette, a neutral, or a custom color. Icon tint recolors the imported glyph from its own grayscale shading while keeping its transparent outline, with independent hue/saturation/brightness and strength controls.
 - **Custom background image** — instead of a flat color, use your own square PNG (512×512 px or larger, subject centered with a little edge bleed) as the shape's plate.
 - **Wallpaper** — use the source's own wallpaper if it has one, or the built-in gradient studio (three colors, Linear/Radial/Soft-blob mixing, blur, and one-tap recoloring/reshuffling).
+- **Calendar & clock preview** — calendar and clock always pick up the same tint as every other icon; a small preview of both sits next to the tint controls so a tint that doesn't suit them can be caught and adjusted before building, not after.
 - **Options** — limit the theme to apps actually installed on your phone, generate a plain calendar/clock when the source has none, and generate a temporary icon (from the app's own launcher icon) for installed apps missing from the source, optionally keeping that app's own icon background instead of the theme's unified color.
-- **Manual replacement** — override the suggested icon for any supported system app, or any other installed, launcher-visible app, from the source's own icon list.
+- **Manual replacement** — override the suggested icon for any supported system app, or any other installed, launcher-visible app, from a grid of the source's own icons, shown with the exact shape and tint they'll export with.
+- **Batch tone curve** — long-press any icon in that grid to start selecting more, then drag a curve over a live histogram of the selected icons to even out how light or dark they look once tinted (tap empty space to add a point, drag a point to move it, long-press a point to remove it). A **Normalize** button shifts each selected icon by its own amount so they land on the same average brightness in one step, instead of hand-tuning each one.
 
 ## Building and applying
 

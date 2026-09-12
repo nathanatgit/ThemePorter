@@ -3,7 +3,9 @@ package com.nathanhanapps.nebulaThemePorter.ui
 import android.app.Application
 import android.app.WallpaperColors
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import com.nathanhanapps.nebulaThemePorter.R
@@ -23,14 +25,19 @@ import com.nathanhanapps.nebulaThemePorter.core.IconPlanner
 import com.nathanhanapps.nebulaThemePorter.core.FixedIconShape
 import com.nathanhanapps.nebulaThemePorter.core.FixedIconComposition
 import com.nathanhanapps.nebulaThemePorter.core.GradientMix
+import com.nathanhanapps.nebulaThemePorter.core.CurvePoint
+import com.nathanhanapps.nebulaThemePorter.core.GrayscaleCurve
 import com.nathanhanapps.nebulaThemePorter.core.NebulaSpec
 import com.nathanhanapps.nebulaThemePorter.core.SourceIcon
 import com.nathanhanapps.nebulaThemePorter.core.StockComponentIndex
 import com.nathanhanapps.nebulaThemePorter.core.ThemeMetadata
 import com.nathanhanapps.nebulaThemePorter.core.ZteSystemApp
 import com.nathanhanapps.nebulaThemePorter.core.ZteSystemApps
+import com.nathanhanapps.nebulaThemePorter.render.Bitmaps
+import com.nathanhanapps.nebulaThemePorter.render.DynamicIcons
 import com.nathanhanapps.nebulaThemePorter.render.PreviewRenderer
 import com.nathanhanapps.nebulaThemePorter.render.FixedIconArt
+import com.nathanhanapps.nebulaThemePorter.render.Shapes
 import com.nathanhanapps.nebulaThemePorter.source.IconPackSource
 import com.nathanhanapps.nebulaThemePorter.source.InstalledApps
 import com.nathanhanapps.nebulaThemePorter.source.MtzSource
@@ -43,6 +50,7 @@ import com.nathanhanapps.nebulaThemePorter.storage.StorageAccess
 import java.io.File
 import java.io.OutputStream
 import java.util.Locale
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -89,6 +97,12 @@ data class PorterState(
     val userAssignments: Map<String, String> = emptyMap(),
     /** Automatic source match shown before the user overrides an app. */
     val userSuggestions: Map<String, String> = emptyMap(),
+    /** Per-app tone-curve override applied before [BuildOptions.fixedTintColor], keyed by
+     * [PorterViewModel.systemContrastKey] / [PorterViewModel.userContrastKey]. */
+    val iconCurves: Map<String, GrayscaleCurve> = emptyMap(),
+    /** Grid cells currently selected for batch curve editing, same keys as [iconCurves]. Non-empty means the
+     * system/user app grids are in selection mode instead of opening the icon picker on tap. */
+    val selectedGridKeys: Set<String> = emptySet(),
     val sourceWallpapers: List<SourceWallpaper> = emptyList(),
     val selectedWallpaperId: String? = null,
     val wallpaperName: String? = null,
@@ -118,6 +132,10 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
 
         /** Common non-system apps recognisable enough for a preview, checked by exact package name. */
         private val extraPreviewPackages = listOf("com.tencent.mm", "com.tencent.mobileqq")
+
+        /** Keys for [PorterState.iconCurves] and [PorterState.selectedGridKeys] - shared with the grid item keys in PorterScreens.kt. */
+        fun systemContrastKey(appId: String) = "system:$appId"
+        fun userContrastKey(stem: String) = "user:$stem"
     }
 
     private val app get() = getApplication<Application>()
@@ -263,6 +281,100 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
             it.copy(userAssignments = if (sourceId == null) it.userAssignments - stem else it.userAssignments + (stem to sourceId))
         }
         replan()
+    }
+
+    /** Long-press on a system/user app grid cell: enters batch curve-editing mode with just that cell selected. */
+    fun startGridSelection(key: String) = mutableState.update { it.copy(selectedGridKeys = setOf(key)) }
+
+    /** Tap on a grid cell while selection mode is already active. */
+    fun toggleGridSelection(key: String) = mutableState.update {
+        it.copy(selectedGridKeys = if (key in it.selectedGridKeys) it.selectedGridKeys - key else it.selectedGridKeys + key)
+    }
+
+    fun clearGridSelection() = mutableState.update { it.copy(selectedGridKeys = emptySet()) }
+
+    /** Applied live as the batch curve editor is dragged, to every currently selected grid cell. */
+    fun setCurveForSelection(curve: GrayscaleCurve) = mutableState.update { state ->
+        if (state.selectedGridKeys.isEmpty()) return@update state
+        state.copy(iconCurves = state.iconCurves + state.selectedGridKeys.associateWith { curve })
+    }
+
+    /** "Normalize": brightness-shifts each selected icon by its own amount so they all land on the same mean
+     * grayscale level - unlike [setCurveForSelection], which applies one identical curve to every selection,
+     * this gives each app whatever shift ITS source icon needs, so a naturally dark icon and a naturally light
+     * one end up looking similarly bright after tint instead of one staying an outlier. The target is the mean
+     * of the combined selection (the same histogram already shown behind the curve), so the group's overall
+     * brightness stays put and individual icons move toward each other rather than to a fixed reference point.
+     * A later drag on the shared curve editor still applies identically to all selected, replacing this. */
+    fun normalizeSelection() {
+        val state = mutableState.value
+        val selection = state.selectedGridKeys
+        if (selection.isEmpty()) return
+        viewModelScope.launch {
+            val sourceIds = selection.mapNotNull { key -> resolveSourceId(state, key)?.let { key to it } }.toMap()
+            if (sourceIds.isEmpty()) return@launch
+            val means = sourceIds.mapValues { (_, sourceId) -> grayscaleMean(sourceId) }
+            val validMeans = means.values.filterNotNull()
+            if (validMeans.isEmpty()) return@launch
+            val target = validMeans.average().toFloat()
+            val newCurves = means.mapNotNull { (key, mean) ->
+                mean ?: return@mapNotNull null
+                val delta = (target - mean).coerceIn(-1f, 1f)
+                key to GrayscaleCurve(listOf(CurvePoint(0f, (0f + delta).coerceIn(0f, 1f)), CurvePoint(1f, (1f + delta).coerceIn(0f, 1f))))
+            }.toMap()
+            mutableState.update { it.copy(iconCurves = it.iconCurves + newCurves) }
+        }
+    }
+
+    /** Mean grayscale level (0..1, alpha-weighted) of one source icon, or null if it couldn't be decoded. */
+    private suspend fun grayscaleMean(sourceId: String): Float? {
+        val bins = grayscaleHistogram(listOf(sourceId))
+        val total = bins.sum()
+        if (total == 0) return null
+        val weighted = bins.indices.sumOf { level -> level.toLong() * bins[level] }
+        return (weighted.toDouble() / total / 255.0).toFloat()
+    }
+
+    /** Same image id a grid cell actually shows for [key] - including the device-icon fallback a user app with
+     * no pack match and no manual override falls back to, which earlier versions of this resolution missed,
+     * silently dropping the curve for any app that only ever showed its own launcher icon. */
+    private fun resolveSourceId(state: PorterState, key: String): String? = when {
+        key.startsWith("system:") -> state.assignments[key.removePrefix("system:")]
+        key.startsWith("user:") -> {
+            val stem = key.removePrefix("user:")
+            state.userAssignments[stem] ?: state.userSuggestions[stem] ?: run {
+                if (!state.options.generateMissingAppIcons) return@run null
+                state.userApps.firstOrNull { it.stem == stem }?.let { DeviceIconId.of(it.packageName, it.activityName) }
+            }
+        }
+        else -> null
+    }
+
+    /** Public entry point for the UI (e.g. the curve panel's histogram) to resolve the same image a grid cell
+     * for [key] is actually showing right now, without duplicating [resolveSourceId]'s fallback logic. */
+    fun resolveSourceId(key: String): String? = resolveSourceId(mutableState.value, key)
+
+    /** A 256-bucket grayscale histogram (alpha-weighted, transparent pixels excluded) across every image in
+     * [imageIds], for the curve editor's backdrop. Reuses cached thumbnail decodes where possible. */
+    suspend fun grayscaleHistogram(imageIds: List<String>): IntArray = withContext(Dispatchers.Default) {
+        val bins = IntArray(256)
+        imageIds.distinct().forEach { id ->
+            val bitmap = synchronized(thumbnails) { thumbnails.get(id) } ?: runCatching {
+                if (DeviceIconId.isDeviceIcon(id)) InstalledApps.decodeIcon(app, id, 128) else source?.decode(id, 128)
+            }.getOrNull() ?: return@forEach
+            val pixels = IntArray(bitmap.width * bitmap.height)
+            bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+            pixels.forEach { pixel ->
+                val alpha = pixel ushr 24
+                if (alpha == 0) return@forEach
+                val r = (pixel shr 16) and 0xFF
+                val g = (pixel shr 8) and 0xFF
+                val b = pixel and 0xFF
+                val gray = (r * 0.2126f + g * 0.7152f + b * 0.0722f).roundToInt().coerceIn(0, 255)
+                bins[gray]++
+            }
+        }
+        bins
     }
 
     /** User apps and labels are intentionally queried only when this section is first opened. */
@@ -423,16 +535,99 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
 
     fun iconKey(sourceId: String): String? = source?.icons?.firstOrNull { it.id == sourceId }?.key
 
-    suspend fun thumbnail(imageId: String): Bitmap? {
-        synchronized(thumbnails) { thumbnails.get(imageId) }?.let { return it }
-        val bitmap = withContext(Dispatchers.IO) {
+    private var thumbnailIconBackKey: String? = null
+    private var thumbnailIconBack: Bitmap? = null
+
+    /** Same iconBack resolution as [fixedIconPreview], but cached - thumbnails call this once per visible grid
+     * cell rather than once per settled slider drag, so re-decoding it from file bytes every time would add up. */
+    private suspend fun thumbnailIconBack(): Bitmap? {
+        val active = source
+        val key = fixedBackgroundFile?.absolutePath ?: active?.extras?.iconBack ?: run {
+            thumbnailIconBackKey = null
+            thumbnailIconBack = null
+            return null
+        }
+        if (key == thumbnailIconBackKey) return thumbnailIconBack
+        val decoded = withContext(Dispatchers.IO) {
+            fixedBackgroundFile?.let { file -> runCatching { Bitmaps.decode(file.readBytes(), NebulaSpec.FIXED_ICON_SIZE) }.getOrNull() }
+                ?: active?.extras?.iconBack?.let { id -> runCatching { active.decode(id, NebulaSpec.FIXED_ICON_SIZE) }.getOrNull() }
+        }
+        thumbnailIconBackKey = key
+        thumbnailIconBack = decoded
+        return decoded
+    }
+
+    /**
+     * [tintColor]/[tintStrength] and [curve], when given, preview the same adjustments [FixedIconArt.render]
+     * bakes into the real build output - they apply regardless of the chosen fixed shape, so list thumbnails
+     * would otherwise look unadjusted right up until export. [fixedOptions], when its shape isn't
+     * [FixedIconShape.isOriginal], also composites the selected shape/plate/background so list previews show the
+     * same outline the exported icon will have, not just a plain square glyph.
+     *
+     * [ownBackground] matters only for a device-fallback icon (an app the pack has no artwork for): it decides
+     * whether that decode keeps the app's own icon background, exactly like [BuildOptions.generatedIconOwnBackground]
+     * does for the real build - done here, before tint/curve run, so a kept background goes through the same
+     * pipeline as everything else instead of being pasted in afterwards untouched. Call sites should pass the
+     * live option value rather than leaving the default, or the preview and the export can show a different
+     * background for the same app - previously the preview always stripped it, hiding which fallback icons
+     * would come out dark until the user saw the finished theme.
+     */
+    suspend fun thumbnail(
+        imageId: String,
+        tintColor: Int? = null,
+        tintStrength: Float = 1f,
+        curve: GrayscaleCurve = GrayscaleCurve(),
+        fixedOptions: BuildOptions? = null,
+        ownBackground: Boolean = true,
+    ): Bitmap? {
+        val shaped = fixedOptions?.takeUnless { it.fixedShape.isOriginal }
+        val isDeviceIcon = DeviceIconId.isDeviceIcon(imageId)
+        val baseKey = if (isDeviceIcon) "$imageId|bg:$ownBackground" else imageId
+        val cacheKey = buildString {
+            append(baseKey)
+            if (tintColor != null) append("|tint:$tintColor:$tintStrength")
+            if (!curve.isIdentity) append("|c:${curve.points}")
+            if (shaped != null) {
+                append("|shape:${shaped.fixedShape}:${shaped.fixedComposition}:${shaped.fixedIconScale}:")
+                append("${shaped.fixedIconAlpha}:${shaped.fixedBackgroundScale}:${shaped.padBackground}")
+            }
+        }
+        synchronized(thumbnails) { thumbnails.get(cacheKey) }?.let { return it }
+        val base = synchronized(thumbnails) { thumbnails.get(baseKey) } ?: withContext(Dispatchers.IO) {
             runCatching {
-                if (DeviceIconId.isDeviceIcon(imageId)) InstalledApps.decodeIcon(app, imageId, 128)
+                if (isDeviceIcon) InstalledApps.decodeIcon(app, imageId, 128, ownBackground)
                 else source?.decode(imageId, 128)
             }.getOrNull()
-        } ?: return null
-        synchronized(thumbnails) { thumbnails.put(imageId, bitmap) }
-        return bitmap
+        }?.also { synchronized(thumbnails) { thumbnails.put(baseKey, it) } } ?: return null
+        if (tintColor == null && curve.isIdentity && shaped == null) return base
+        val curveLut = if (curve.isIdentity) null else curve.lut()
+        val prepared = if (shaped != null) {
+            val iconBack = thumbnailIconBack()
+            withContext(Dispatchers.Default) {
+                FixedIconArt.render(
+                    source = base,
+                    shape = shaped.fixedShape,
+                    composition = shaped.fixedComposition,
+                    iconScale = shaped.fixedIconScale,
+                    iconAlpha = shaped.fixedIconAlpha,
+                    tintColor = tintColor,
+                    tintStrength = tintStrength,
+                    backgroundScale = shaped.fixedBackgroundScale,
+                    padColor = shaped.padBackground.toInt(),
+                    iconBack = iconBack,
+                    curveLut = curveLut,
+                )
+            }
+        } else {
+            withContext(Dispatchers.Default) {
+                val curved = curveLut?.let { Bitmaps.curve(base, it) } ?: base
+                tintColor?.let { color ->
+                    Bitmaps.tint(curved, color, tintStrength).also { if (curved !== base) curved.recycle() }
+                } ?: curved
+            }
+        }
+        synchronized(thumbnails) { thumbnails.put(cacheKey, prepared) }
+        return prepared
     }
 
     fun fixedPreviewIconId(): String? = mutableState.value.fixedPreviewIconId ?: fixedPreviewIconChoices().firstOrNull()
@@ -491,6 +686,50 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * A same-tint, same-shape sample of what the calendar's day tiles will actually look like, reusing
+     * [DynamicIcons.calendarStrip] itself (not a re-derivation of it) so the preview can never drift from what a
+     * real build produces - just today's frame cropped out of the same strip. Null when the source has no
+     * calendar and [BuildOptions.generateMissingDynamicIcons] wouldn't generate one either, matching whether the
+     * build would actually write a calendar asset at all.
+     */
+    suspend fun calendarIconPreview(options: BuildOptions): Bitmap? {
+        val active = source ?: return null
+        if (active.extras.calendar == null && !options.generateMissingDynamicIcons) return null
+        return withContext(Dispatchers.Default) {
+            val art = DynamicIcons.loadCalendar(active, active.extras.calendar, options.fixedTintColor?.toInt(), options.fixedTintStrength)
+            val strip = DynamicIcons.calendarStrip(art, options.fixedShape, !options.fixedShape.isOriginal)
+            val size = NebulaSpec.ASSET_SIZE
+            val today = (java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_MONTH) - 1).coerceIn(0, 31)
+            Bitmap.createBitmap(strip, today * size, 0, size, size).also { strip.recycle() }
+        }
+    }
+
+    /**
+     * Same idea as [calendarIconPreview] but for the clock: [DynamicIcons.clockStrip] hands back three separate
+     * tiles (hour hand, minute hand, dial) meant for the launcher to composite live at the real time, so this
+     * just overlays those same three tiles once to give an at-a-glance look, rather than reimplementing hand
+     * rotation and risking it not matching what actually gets exported.
+     */
+    suspend fun clockIconPreview(options: BuildOptions): Bitmap? {
+        val active = source ?: return null
+        if (active.extras.clock == null && !options.generateMissingDynamicIcons) return null
+        return withContext(Dispatchers.Default) {
+            val art = DynamicIcons.loadClock(active, active.extras.clock, options.fixedTintColor?.toInt(), options.fixedTintStrength)
+            val strip = DynamicIcons.clockStrip(art, options.fixedShape, !options.fixedShape.isOriginal, options.fixedTintColor?.toInt())
+            val size = NebulaSpec.ASSET_SIZE
+            val out = Bitmaps.square(size)
+            val canvas = Canvas(out)
+            val dst = Rect(0, 0, size, size)
+            fun frame(index: Int) = Rect(index * size, 0, (index + 1) * size, size)
+            canvas.drawBitmap(strip, frame(2), dst, null) // dial
+            canvas.drawBitmap(strip, frame(0), dst, null) // hour hand
+            canvas.drawBitmap(strip, frame(1), dst, null) // minute hand
+            strip.recycle()
+            out
+        }
+    }
+
     override fun onCleared() {
         closeSource()
         wallpaperFile?.delete()
@@ -546,6 +785,9 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
                     selectedWallpaperId = opened.extras.wallpaper,
                     outputName = defaultOutputName(opened.suggestedLabel),
                 )
+                // A fresh gradient palette each time a source loads, so the generated wallpaper isn't the same
+                // three colors on every theme unless the user deliberately picks them.
+                randomizeGeneratedWallpaperColors()
                 replan()
                 refreshWallpaperVisual()
             }.onFailure { error ->
@@ -589,6 +831,7 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
                     current.selectedWallpaperId,
                     fixedBackgroundFile,
                     openOutput,
+                    iconCurves = sourceIdCurveMap(current),
                 ) { progress ->
                     mutableState.update { it.copy(progress = progress) }
                 }
@@ -601,6 +844,17 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
                 mutableState.update { it.copy(stage = Stage.CONFIGURE, progress = null, error = error.userMessage()) }
             }
         }
+    }
+
+    /**
+     * Resolves [PorterState.iconCurves] (system app id / user app stem keyed) to the source icon each app is
+     * currently showing, since that - not the output file name - is what [ThemeBuilder.build] keys curves by.
+     * An app can plan under several output stems (its real installed activity, plus whatever aliases the icon
+     * pack's own appfilter declares), and which one a given ROM's launcher actually reads isn't something this
+     * app controls; keying by source icon means the edit follows the artwork through every one of those files.
+     */
+    private fun sourceIdCurveMap(state: PorterState): Map<String, GrayscaleCurve> = buildMap {
+        state.iconCurves.forEach { (key, curve) -> resolveSourceId(state, key)?.let { put(it, curve) } }
     }
 
     private fun baseState(from: PorterState) = PorterState(
@@ -724,6 +978,8 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
         source?.let { runCatching { it.close() } }
         source = null
         planner = null
+        thumbnailIconBackKey = null
+        thumbnailIconBack = null
         synchronized(thumbnails) { thumbnails.evictAll() }
     }
 

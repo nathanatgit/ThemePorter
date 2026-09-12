@@ -6,6 +6,7 @@ import com.nathanhanapps.nebulaThemePorter.R
 import com.nathanhanapps.nebulaThemePorter.core.BuildOptions
 import com.nathanhanapps.nebulaThemePorter.core.DeviceIconId
 import com.nathanhanapps.nebulaThemePorter.core.FixedIconShape
+import com.nathanhanapps.nebulaThemePorter.core.GrayscaleCurve
 import com.nathanhanapps.nebulaThemePorter.core.IconPlan
 import com.nathanhanapps.nebulaThemePorter.core.IconMaskShape
 import com.nathanhanapps.nebulaThemePorter.core.IconsZipWriter
@@ -57,6 +58,14 @@ class ThemeBuilder(private val context: Context) {
         wallpaperSourceId: String?,
         fixedBackgroundOverride: File?,
         openOutput: () -> OutputStream,
+        /**
+         * [PlannedIcon.sourceId] to a tone-curve override, applied before [BuildOptions.fixedTintColor]. Keyed by
+         * source icon rather than by output stem: a single app can land in the plan under several file names (its
+         * real installed activity, plus whatever aliases the icon pack's own appfilter declares for it), and the
+         * launcher does not always read the one this app's own code considers canonical. Keying by the icon
+         * itself means every one of those duplicate files gets the same edit regardless of which the ROM reads.
+         */
+        iconCurves: Map<String, GrayscaleCurve> = emptyMap(),
         onProgress: (BuildProgress) -> Unit,
     ): BuildSummary = withContext(Dispatchers.Default) {
         val workDir = File(context.cacheDir, "build").apply {
@@ -125,7 +134,9 @@ class ThemeBuilder(private val context: Context) {
                     ensureActive()
                     val rendered = coroutineScope {
                         chunk.map { (sourceId, planned) ->
-                            async { renderIcon(source, sourceId, planned.map { it.stem }, options, iconBack, fallbackFixedShape) }
+                            val curve = iconCurves[sourceId] ?: GrayscaleCurve()
+                            val curveLut = if (curve.isIdentity) null else curve.lut()
+                            async { renderIcon(source, sourceId, planned.map { it.stem }, options, iconBack, fallbackFixedShape, curveLut) }
                         }.awaitAll()
                     }
                     rendered.forEach { icon ->
@@ -217,6 +228,7 @@ class ThemeBuilder(private val context: Context) {
         options: BuildOptions,
         iconBack: Bitmap?,
         fallbackFixedShape: FixedIconShape,
+        curveLut: IntArray?,
     ): RenderedIcon? {
         val bitmap = decodeSource(source, sourceId, options.generatedIconOwnBackground) ?: return null
         val files = ArrayList<Pair<String, ByteArray>>()
@@ -228,6 +240,7 @@ class ThemeBuilder(private val context: Context) {
             iconAlpha = options.fixedIconAlpha,
             tintColor = options.fixedTintColor?.toInt(),
             tintStrength = options.fixedTintStrength,
+            curveLut = curveLut,
             backgroundScale = options.fixedBackgroundScale,
             padColor = options.padBackground.toInt(),
             iconBack = iconBack,

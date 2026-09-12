@@ -51,6 +51,19 @@ object Bitmaps {
 
     fun solid(size: Int, color: Int): Bitmap = square(size).apply { eraseColor(color) }
 
+    /**
+     * Composites [src] over a solid [color] backdrop, discarding its own alpha shape. A pack-supplied icon-back
+     * texture is often itself already a rounded square/squircle drawn with transparent padding around it - left
+     * as-is, that baked-in silhouette survives every later shape clip unchanged (a clip can only remove pixels,
+     * never restore ones the source never had), so every [FixedIconShape] ends up looking like the pack's own
+     * shape. Flattening it to fully opaque first makes the later clip the only thing that decides the outline.
+     */
+    fun opaque(src: Bitmap, color: Int): Bitmap {
+        val out = solid(src.width, color)
+        Canvas(out).drawBitmap(src, 0f, 0f, filterPaint)
+        return out
+    }
+
     /** Preserves source alpha and recolors its grayscale information by multiplying it with [color]. */
     fun tint(source: Bitmap, color: Int, strength: Float): Bitmap {
         val ratio = strength.coerceIn(0f, 1f)
@@ -78,6 +91,25 @@ object Bitmaps {
                 (green + (tintedGreen - green) * ratio).toInt().coerceIn(0, 255),
                 (blue + (tintedBlue - blue) * ratio).toInt().coerceIn(0, 255),
             )
+        }
+        out.setPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
+        return out
+    }
+
+    /**
+     * Preserves alpha; maps each RGB channel independently through [lut] (a 256-entry 0..255 table, e.g. from
+     * [com.nathanhanapps.nebulaThemePorter.core.GrayscaleCurve.lut]). Meant to run before [tint], whose
+     * grayscale-multiply step is what actually turns this tone remap into a visible tint difference.
+     */
+    fun curve(source: Bitmap, lut: IntArray): Bitmap {
+        val out = source.copy(Bitmap.Config.ARGB_8888, true)
+        val pixels = IntArray(out.width * out.height)
+        out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
+        pixels.indices.forEach { index ->
+            val pixel = pixels[index]
+            val alpha = pixel ushr 24
+            if (alpha == 0) return@forEach
+            pixels[index] = Color.argb(alpha, lut[Color.red(pixel)], lut[Color.green(pixel)], lut[Color.blue(pixel)])
         }
         out.setPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
         return out

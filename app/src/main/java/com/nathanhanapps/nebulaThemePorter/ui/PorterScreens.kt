@@ -1,4 +1,4 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 
 package com.nathanhanapps.nebulaThemePorter.ui
 
@@ -18,6 +18,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,6 +28,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -73,19 +77,25 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asComposePath
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
@@ -97,16 +107,20 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nathanhanapps.nebulaThemePorter.R
 import com.nathanhanapps.nebulaThemePorter.build.BuildProgress
+import com.nathanhanapps.nebulaThemePorter.core.BuildOptions
+import com.nathanhanapps.nebulaThemePorter.core.CurvePoint
 import com.nathanhanapps.nebulaThemePorter.core.DeviceIconId
 import com.nathanhanapps.nebulaThemePorter.core.FixedIconShape
 import com.nathanhanapps.nebulaThemePorter.core.FixedIconComposition
 import com.nathanhanapps.nebulaThemePorter.core.GradientMix
+import com.nathanhanapps.nebulaThemePorter.core.GrayscaleCurve
 import com.nathanhanapps.nebulaThemePorter.core.NebulaSpec
 import com.nathanhanapps.nebulaThemePorter.core.ZteSystemApp
 import com.nathanhanapps.nebulaThemePorter.core.ZteSystemApps
@@ -598,39 +612,59 @@ private fun ConfigureScreen(
             viewModel.consumeError()
         }
     }
+    val selectionActive = state.selectedGridKeys.isNotEmpty()
+    BackHandler(enabled = selectionActive) { viewModel.clearGridSelection() }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(stringResource(R.string.customize_theme), style = MaterialTheme.typography.titleLarge)
-                        Text(summary.fileName, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (selectionActive) {
+                        Text(
+                            pluralStringResource(R.plurals.icons_selected_count, state.selectedGridKeys.size, state.selectedGridKeys.size),
+                            style = MaterialTheme.typography.titleLarge,
+                        )
+                    } else {
+                        Column {
+                            Text(stringResource(R.string.customize_theme), style = MaterialTheme.typography.titleLarge)
+                            Text(summary.fileName, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
                     }
                 },
-                navigationIcon = { TextButton(onClick = viewModel::reset) { Text(stringResource(R.string.close)) } },
+                navigationIcon = {
+                    if (selectionActive) {
+                        TextButton(onClick = viewModel::clearGridSelection) { Text(stringResource(R.string.cancel)) }
+                    } else {
+                        TextButton(onClick = viewModel::reset) { Text(stringResource(R.string.close)) }
+                    }
+                },
             )
         },
         bottomBar = {
-            Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 3.dp) {
-                Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)) {
-                    Text(
-                        stringResource(R.string.plan_summary, state.plannedImages, state.plannedNames),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Button(
-                        onClick = onBuild,
-                        enabled = state.plannedNames > 0 && (state.labelZh.isNotBlank() || state.labelEn.isNotBlank()),
-                        modifier = Modifier.fillMaxWidth().height(52.dp),
-                        shape = MaterialTheme.shapes.large,
-                    ) {
+            Column {
+                if (selectionActive) {
+                    CurveSelectionPanel(state, viewModel)
+                }
+                Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 3.dp) {
+                    Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)) {
                         Text(
-                            if (state.hasFileAccess) stringResource(R.string.build_into, File(state.outputDir).name)
-                            else stringResource(R.string.build_zmtp),
+                            stringResource(R.string.plan_summary, state.plannedImages, state.plannedNames),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        Spacer(Modifier.height(6.dp))
+                        Button(
+                            onClick = onBuild,
+                            enabled = state.plannedNames > 0 && (state.labelZh.isNotBlank() || state.labelEn.isNotBlank()),
+                            modifier = Modifier.fillMaxWidth().height(52.dp),
+                            shape = MaterialTheme.shapes.large,
+                        ) {
+                            Text(
+                                if (state.hasFileAccess) stringResource(R.string.build_into, File(state.outputDir).name)
+                                else stringResource(R.string.build_zmtp),
+                            )
+                        }
                     }
                 }
             }
@@ -638,7 +672,15 @@ private fun ConfigureScreen(
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding).imePadding(),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .imePadding()
+                // Tapping anywhere that isn't itself clickable (a grid cell, a field, ...) collapses the curve
+                // panel; those consume their own tap first, so this only ever fires on genuinely empty space.
+                .pointerInput(selectionActive) {
+                    if (selectionActive) detectTapGestures(onTap = { viewModel.clearGridSelection() })
+                },
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
@@ -670,28 +712,6 @@ private fun ConfigureScreen(
                         Hint(stringResource(R.string.choose_save_each_time))
                         TextButton(onClick = onRequestAccess) { Text(stringResource(R.string.allow_all_files_access)) }
                     }
-                }
-            }
-            item {
-                Section(stringResource(R.string.fixed_icon_shape)) {
-                    Hint(stringResource(R.string.fixed_shape_detail))
-                    FixedShapePicker(options.fixedShape, viewModel::setFixedShape, state.fixedBackgroundName, onPickFixedBackground, viewModel::clearFixedBackground)
-                    Hint(
-                        if (options.fixedShape.isOriginal) stringResource(R.string.fixed_original_detail)
-                        else stringResource(R.string.fixed_shape_rendered_detail),
-                    )
-                }
-            }
-            if (!options.fixedShape.isOriginal) {
-                item {
-                    FixedIconCompositionSection(
-                        options,
-                        fixedPreviewIconId,
-                        fixedPreviewIconChoices,
-                        viewModel,
-                        state.wallpaperPalette,
-                        onManualPreviewPick = { pickFixedPreviewIcon = true },
-                    )
                 }
             }
             item {
@@ -752,6 +772,115 @@ private fun ConfigureScreen(
                 }
             }
             item {
+                Section(stringResource(R.string.fixed_icon_shape)) {
+                    Hint(stringResource(R.string.fixed_shape_detail))
+                    FixedShapePicker(options.fixedShape, viewModel::setFixedShape, state.fixedBackgroundName, onPickFixedBackground, viewModel::clearFixedBackground)
+                    Hint(
+                        if (options.fixedShape.isOriginal) stringResource(R.string.fixed_original_detail)
+                        else stringResource(R.string.fixed_shape_rendered_detail),
+                    )
+                }
+            }
+            if (!options.fixedShape.isOriginal) {
+                item {
+                    FixedIconCompositionSection(
+                        options,
+                        fixedPreviewIconId,
+                        fixedPreviewIconChoices,
+                        viewModel,
+                        state.wallpaperPalette,
+                        hasCalendar = summary.hasCalendar,
+                        hasClock = summary.hasClock,
+                        onManualPreviewPick = { pickFixedPreviewIcon = true },
+                    )
+                }
+            }
+            item {
+                SectionHeader(stringResource(R.string.manual_replacement), stringResource(R.string.system_apps_detail))
+            }
+            if (state.visibleSystemApps.isEmpty()) {
+                item { Hint(stringResource(R.string.no_visible_system_apps)) }
+            } else {
+                item {
+                    CollapsibleAppsHeader(
+                        title = stringResource(R.string.system_apps),
+                        expanded = systemAppsExpanded,
+                        detail = pluralStringResource(R.plurals.launcher_apps_ready, state.visibleSystemApps.size, state.visibleSystemApps.size),
+                        onClick = { systemAppsExpanded = !systemAppsExpanded },
+                    )
+                }
+                if (systemAppsExpanded) {
+                    items(state.visibleSystemApps.chunked(AppGridColumns), key = { row -> row.joinToString(",") { "system:${it.id}" } }) { row ->
+                        AppGridRow(row.size) {
+                            row.forEach { app ->
+                                val key = PorterViewModel.systemContrastKey(app.id)
+                                SystemAppGridCell(
+                                    app = app,
+                                    sourceId = state.assignments[app.id],
+                                    fallbackEnabled = options.generateMissingAppIcons,
+                                    tintColor = options.fixedTintColor,
+                                    tintStrength = options.fixedTintStrength,
+                                    curve = state.iconCurves[key] ?: GrayscaleCurve(),
+                                    fixedOptions = options,
+                                    selected = key in state.selectedGridKeys,
+                                    viewModel = viewModel,
+                                    onClick = {
+                                        if (state.selectedGridKeys.isEmpty()) pickerSystemAppId = app.id else viewModel.toggleGridSelection(key)
+                                    },
+                                    onLongClick = {
+                                        if (state.selectedGridKeys.isEmpty()) viewModel.startGridSelection(key) else viewModel.toggleGridSelection(key)
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            item {
+                CollapsibleUserAppsHeader(
+                    expanded = state.userAppsExpanded,
+                    loading = state.userAppsLoading,
+                    loaded = state.userAppsLoaded,
+                    count = state.userApps.size,
+                    onClick = viewModel::toggleUserApps,
+                )
+            }
+            if (state.userAppsExpanded && state.userAppsLoading) {
+                item {
+                    Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalArrangement = Arrangement.Center) {
+                        CircularProgressIndicator(Modifier.size(28.dp))
+                    }
+                }
+            }
+            if (state.userAppsExpanded && !state.userAppsLoading) {
+                items(state.userApps.chunked(AppGridColumns), key = { row -> row.joinToString(",") { "user:${it.stem}" } }) { row ->
+                    AppGridRow(row.size) {
+                        row.forEach { app ->
+                            val sourceId = state.userAssignments[app.stem] ?: state.userSuggestions[app.stem]
+                            val key = PorterViewModel.userContrastKey(app.stem)
+                            UserAppGridCell(
+                                app = app,
+                                sourceId = sourceId,
+                                manuallyAssigned = app.stem in state.userAssignments,
+                                fallbackEnabled = options.generateMissingAppIcons,
+                                tintColor = options.fixedTintColor,
+                                tintStrength = options.fixedTintStrength,
+                                curve = state.iconCurves[key] ?: GrayscaleCurve(),
+                                fixedOptions = options,
+                                selected = key in state.selectedGridKeys,
+                                viewModel = viewModel,
+                                onClick = {
+                                    if (state.selectedGridKeys.isEmpty()) pickerUserStem = app.stem else viewModel.toggleGridSelection(key)
+                                },
+                                onLongClick = {
+                                    if (state.selectedGridKeys.isEmpty()) viewModel.startGridSelection(key) else viewModel.toggleGridSelection(key)
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+            item {
                 Section(stringResource(R.string.options)) {
                     SwitchRow(
                         stringResource(R.string.installed_apps_only),
@@ -781,48 +910,6 @@ private fun ConfigureScreen(
                     }
                 }
             }
-            item {
-                SectionHeader(stringResource(R.string.manual_replacement), stringResource(R.string.system_apps_detail))
-            }
-            if (state.visibleSystemApps.isEmpty()) {
-                item { Hint(stringResource(R.string.no_visible_system_apps)) }
-            } else {
-                item {
-                    CollapsibleAppsHeader(
-                        title = stringResource(R.string.system_apps),
-                        expanded = systemAppsExpanded,
-                        detail = pluralStringResource(R.plurals.launcher_apps_ready, state.visibleSystemApps.size, state.visibleSystemApps.size),
-                        onClick = { systemAppsExpanded = !systemAppsExpanded },
-                    )
-                }
-                if (systemAppsExpanded) {
-                    items(state.visibleSystemApps, key = { "system:${it.id}" }) { app ->
-                        SystemAppRow(app, state.assignments[app.id], options.generateMissingAppIcons, viewModel) { pickerSystemAppId = app.id }
-                    }
-                }
-            }
-            item {
-                CollapsibleUserAppsHeader(
-                    expanded = state.userAppsExpanded,
-                    loading = state.userAppsLoading,
-                    loaded = state.userAppsLoaded,
-                    count = state.userApps.size,
-                    onClick = viewModel::toggleUserApps,
-                )
-            }
-            if (state.userAppsExpanded && state.userAppsLoading) {
-                item {
-                    Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalArrangement = Arrangement.Center) {
-                        CircularProgressIndicator(Modifier.size(28.dp))
-                    }
-                }
-            }
-            if (state.userAppsExpanded && !state.userAppsLoading) {
-                items(state.userApps, key = { "user:${it.stem}" }) { app ->
-                    val sourceId = state.userAssignments[app.stem] ?: state.userSuggestions[app.stem]
-                    UserAppRow(app, sourceId, app.stem in state.userAssignments, options.generateMissingAppIcons, viewModel) { pickerUserStem = app.stem }
-                }
-            }
         }
     }
 
@@ -834,6 +921,9 @@ private fun ConfigureScreen(
                 title = if (language == Locale.CHINESE.language) app.labelZh else app.labelEn,
                 subtitle = null,
                 viewModel = viewModel,
+                tintColor = options.fixedTintColor,
+                tintStrength = options.fixedTintStrength,
+                fixedOptions = options,
                 onAssign = { viewModel.assign(app.id, it) },
                 onDismiss = { pickerSystemAppId = null },
             )
@@ -845,6 +935,9 @@ private fun ConfigureScreen(
                 title = app.label,
                 subtitle = app.packageName,
                 viewModel = viewModel,
+                tintColor = options.fixedTintColor,
+                tintStrength = options.fixedTintStrength,
+                fixedOptions = options,
                 onAssign = { viewModel.assignUserApp(stem, it) },
                 onDismiss = { pickerUserStem = null },
             )
@@ -855,10 +948,210 @@ private fun ConfigureScreen(
             title = stringResource(R.string.fixed_icon_preview_pick),
             subtitle = null,
             viewModel = viewModel,
+            tintColor = options.fixedTintColor,
+            tintStrength = options.fixedTintStrength,
+            fixedOptions = options,
             onAssign = { viewModel.setFixedPreviewIcon(it); pickFixedPreviewIcon = false },
             onDismiss = { pickFixedPreviewIcon = false },
         )
     }
+}
+
+/**
+ * Docked above the build button while [PorterState.selectedGridKeys] is non-empty. Shows a grayscale histogram
+ * of every selected icon with an editable tone curve over it; every drag/tap/long-press applies live to all of
+ * them via [PorterViewModel.setCurveForSelection] - see [CurveEditor] for the gesture handling itself.
+ */
+@Composable
+private fun CurveSelectionPanel(state: PorterState, viewModel: PorterViewModel) {
+    val selection = state.selectedGridKeys
+    val firstKey = selection.firstOrNull() ?: return
+    val curve = state.iconCurves[firstKey] ?: GrayscaleCurve()
+    val selectionSignature = remember(selection) { selection.sorted().joinToString(",") }
+    val imageIds = remember(selectionSignature, state.assignments, state.userAssignments, state.userSuggestions, state.options.generateMissingAppIcons) {
+        selection.mapNotNull { key -> viewModel.resolveSourceId(key) }
+    }
+    val histogram by produceState<IntArray?>(initialValue = null, selectionSignature) { value = viewModel.grayscaleHistogram(imageIds) }
+
+    Surface(color = MaterialTheme.colorScheme.secondaryContainer, tonalElevation = 2.dp) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.icon_contrast), style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                TextButton(onClick = viewModel::normalizeSelection, enabled = selection.size > 1) { Text(stringResource(R.string.normalize)) }
+                TextButton(onClick = { viewModel.setCurveForSelection(GrayscaleCurve()) }) { Text(stringResource(R.string.reset)) }
+                TextButton(onClick = viewModel::clearGridSelection) { Text("✕") }
+            }
+            Text(
+                stringResource(R.string.icon_contrast_detail),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.78f),
+            )
+            if (selection.size > 1) {
+                Text(
+                    stringResource(R.string.normalize_detail),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.78f),
+                )
+            }
+            CurveEditor(
+                points = curve.points,
+                histogram = histogram,
+                onChange = { newPoints -> viewModel.setCurveForSelection(GrayscaleCurve(newPoints)) },
+            )
+        }
+    }
+}
+
+private const val MaxCurvePoints = 12
+private val CurveHitRadius = 22.dp
+private val CurveEditorSize = 200.dp
+
+/** Margin between the canvas edge and the plotted curve area, so the start/end handles sit fully on-screen
+ * instead of half-clipped at the exact corner. */
+private val CurveInset = 16.dp
+
+/**
+ * A histogram-backed tone curve: tap empty space to add a point, drag any point to move it in any direction
+ * (including the two endpoints - moving one inward just flat-extrapolates the curve past it, which
+ * [GrayscaleCurve.lut] already does), long-press an interior point to remove it.
+ */
+@Composable
+private fun CurveEditor(points: List<CurvePoint>, histogram: IntArray?, onChange: (List<CurvePoint>) -> Unit) {
+    val latestPoints = rememberUpdatedState(points)
+    val histColor = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.28f)
+    val gridColor = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.18f)
+    val borderColor = MaterialTheme.colorScheme.outlineVariant
+    val curveColor = MaterialTheme.colorScheme.primary
+    val pointColor = MaterialTheme.colorScheme.primary
+    val pointCenterColor = MaterialTheme.colorScheme.onPrimary
+    val maxCount = remember(histogram) { (histogram?.maxOrNull() ?: 0).coerceAtLeast(1) }
+
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Canvas(
+            modifier = Modifier
+                .size(CurveEditorSize)
+                .background(MaterialTheme.colorScheme.surface)
+                .pointerInput(Unit) {
+                    var dragIndex: Int? = null
+                    val insetPx = CurveInset.toPx()
+                    val hitRadiusPx = CurveHitRadius.toPx()
+                    detectDragGestures(
+                        onDragStart = { offset -> dragIndex = nearestCurvePointIndex(latestPoints.value, offset, plotRect(size.toSize(), insetPx), hitRadiusPx) },
+                        onDragEnd = { dragIndex = null },
+                        onDragCancel = { dragIndex = null },
+                    ) { change, _ ->
+                        val index = dragIndex ?: return@detectDragGestures
+                        change.consume()
+                        onChange(moveCurvePoint(latestPoints.value, index, change.position, plotRect(size.toSize(), insetPx)))
+                    }
+                }
+                .pointerInput(Unit) {
+                    val insetPx = CurveInset.toPx()
+                    val hitRadiusPx = CurveHitRadius.toPx()
+                    detectTapGestures(
+                        onTap = { offset ->
+                            val current = latestPoints.value
+                            val plot = plotRect(size.toSize(), insetPx)
+                            if (current.size < MaxCurvePoints && nearestCurvePointIndex(current, offset, plot, hitRadiusPx) == null) {
+                                onChange(insertCurvePoint(current, offset, plot))
+                            }
+                        },
+                        onLongPress = { offset ->
+                            val current = latestPoints.value
+                            val index = nearestCurvePointIndex(current, offset, plotRect(size.toSize(), insetPx), hitRadiusPx)
+                            if (index != null && index != 0 && index != current.lastIndex) {
+                                onChange(current.filterIndexed { i, _ -> i != index })
+                            }
+                        },
+                    )
+                },
+        ) {
+            val plot = plotRect(size, CurveInset.toPx())
+            drawRect(color = borderColor, topLeft = plot.topLeft, size = plot.size, style = Stroke(width = 1.5f))
+
+            if (histogram != null) {
+                val barWidth = (plot.width / 256f).coerceAtLeast(1f)
+                histogram.forEachIndexed { level, count ->
+                    if (count == 0) return@forEachIndexed
+                    val barHeight = plot.height * (count.toFloat() / maxCount).coerceIn(0f, 1f)
+                    drawRect(
+                        color = histColor,
+                        topLeft = Offset(plot.left + level / 255f * plot.width, plot.bottom - barHeight),
+                        size = Size(barWidth, barHeight),
+                    )
+                }
+            }
+            drawLine(gridColor, Offset(plot.left, plot.center.y), Offset(plot.right, plot.center.y), strokeWidth = 1f)
+            drawLine(gridColor, Offset(plot.center.x, plot.top), Offset(plot.center.x, plot.bottom), strokeWidth = 1f)
+
+            val lut = GrayscaleCurve(points).lut()
+            val curvePath = Path()
+            lut.forEachIndexed { level, value ->
+                val x = plot.left + level / 255f * plot.width
+                val y = plot.bottom - value / 255f * plot.height
+                if (level == 0) curvePath.moveTo(x, y) else curvePath.lineTo(x, y)
+            }
+            drawPath(curvePath, color = curveColor, style = Stroke(width = 7f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+
+            points.forEach { point ->
+                val center = curvePointToOffset(point, plot)
+                drawCircle(color = pointColor, radius = 11f, center = center)
+                drawCircle(color = pointCenterColor, radius = 4.5f, center = center)
+            }
+        }
+    }
+}
+
+/**
+ * The curve's 0..1 coordinate space is mapped inside this rect, inset from the canvas edges by [CurveInset] on
+ * every side - without the inset, the start/end handles sit exactly on the corners, half off-canvas and much
+ * harder to see or grab than the interior ones.
+ */
+private fun plotRect(canvasSize: Size, insetPx: Float): Rect = Rect(
+    insetPx,
+    insetPx,
+    (canvasSize.width - insetPx).coerceAtLeast(insetPx + 1f),
+    (canvasSize.height - insetPx).coerceAtLeast(insetPx + 1f),
+)
+
+private fun curvePointToOffset(point: CurvePoint, plot: Rect): Offset =
+    Offset(plot.left + point.x * plot.width, plot.bottom - point.y * plot.height)
+
+private fun offsetToCurvePoint(offset: Offset, plot: Rect): CurvePoint = CurvePoint(
+    ((offset.x - plot.left) / plot.width).coerceIn(0f, 1f),
+    (1f - (offset.y - plot.top) / plot.height).coerceIn(0f, 1f),
+)
+
+private fun nearestCurvePointIndex(points: List<CurvePoint>, offset: Offset, plot: Rect, thresholdPx: Float): Int? {
+    var bestIndex: Int? = null
+    var bestDistance = thresholdPx
+    points.forEachIndexed { index, point ->
+        val distance = (curvePointToOffset(point, plot) - offset).getDistance()
+        if (distance <= bestDistance) {
+            bestDistance = distance
+            bestIndex = index
+        }
+    }
+    return bestIndex
+}
+
+/**
+ * Every point, endpoints included, is draggable in both directions - only clamped so it can't cross its
+ * immediate neighbor (keeps [points] sorted by x without a resort) or leave the 0..1 plot. Pulling an endpoint
+ * inward just flat-extrapolates the curve past it, which [GrayscaleCurve.lut] already does on its own.
+ */
+private fun moveCurvePoint(points: List<CurvePoint>, index: Int, offset: Offset, plot: Rect): List<CurvePoint> {
+    val normalized = offsetToCurvePoint(offset, plot)
+    val minX = if (index == 0) 0f else points[index - 1].x + 0.01f
+    val maxX = if (index == points.lastIndex) 1f else points[index + 1].x - 0.01f
+    val x = normalized.x.coerceIn(minX.coerceAtMost(maxX), maxX.coerceAtLeast(minX))
+    return points.toMutableList().apply { this[index] = CurvePoint(x, normalized.y) }
+}
+
+private fun insertCurvePoint(points: List<CurvePoint>, offset: Offset, plot: Rect): List<CurvePoint> {
+    val normalized = offsetToCurvePoint(offset, plot)
+    val x = normalized.x.coerceIn(0.02f, 0.98f)
+    return (points + CurvePoint(x, normalized.y)).sortedBy { it.x }
 }
 
 @Composable
@@ -1012,6 +1305,8 @@ private fun FixedIconCompositionSection(
     previewIconChoices: List<String>,
     viewModel: PorterViewModel,
     wallpaperPalette: List<Long>,
+    hasCalendar: Boolean,
+    hasClock: Boolean,
     onManualPreviewPick: () -> Unit,
 ) {
     Section(stringResource(R.string.fixed_icon_composition)) {
@@ -1044,6 +1339,57 @@ private fun FixedIconCompositionSection(
         Text(stringResource(R.string.fixed_background_size, (options.fixedBackgroundScale * 100).roundToInt()), style = MaterialTheme.typography.labelLarge)
         Slider(options.fixedBackgroundScale, viewModel::setFixedBackgroundScale, valueRange = 0.35f..1.25f)
         FixedTintPaletteControls(options, wallpaperPalette, viewModel)
+        if (hasCalendar || hasClock || options.generateMissingDynamicIcons) {
+            DynamicIconPreviewRow(options, viewModel)
+        }
+    }
+}
+
+/**
+ * Calendar/clock always get the same tint as every other icon, automatically - there is no separate toggle for
+ * them. This just makes that visible ahead of a build (reusing the exact strip-generation code the real build
+ * uses, cropped down to one representative frame each - see [PorterViewModel.calendarIconPreview] /
+ * [PorterViewModel.clockIconPreview]) so a tint that doesn't suit them can be caught and adjusted here instead
+ * of only after opening the finished theme.
+ */
+@Composable
+private fun DynamicIconPreviewRow(options: com.nathanhanapps.nebulaThemePorter.core.BuildOptions, viewModel: PorterViewModel) {
+    val calendar by produceState<android.graphics.Bitmap?>(
+        initialValue = null,
+        options.fixedShape, options.fixedComposition, options.fixedTintColor, options.fixedTintStrength, options.generateMissingDynamicIcons,
+    ) {
+        delay(90)
+        value = viewModel.calendarIconPreview(options)
+    }
+    val clock by produceState<android.graphics.Bitmap?>(
+        initialValue = null,
+        options.fixedShape, options.fixedComposition, options.fixedTintColor, options.fixedTintStrength, options.generateMissingDynamicIcons,
+    ) {
+        delay(90)
+        value = viewModel.clockIconPreview(options)
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        HorizontalDivider(modifier = Modifier.padding(top = 4.dp))
+        Text(stringResource(R.string.dynamic_icon_preview), style = MaterialTheme.typography.titleSmall)
+        Hint(stringResource(R.string.dynamic_icon_preview_detail))
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            DynamicPreviewTile(stringResource(R.string.calendar), calendar)
+            DynamicPreviewTile(stringResource(R.string.clock), clock)
+        }
+    }
+}
+
+@Composable
+private fun DynamicPreviewTile(label: String, bitmap: android.graphics.Bitmap?) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerHighest) {
+            Box(Modifier.size(72.dp), contentAlignment = Alignment.Center) {
+                bitmap?.let {
+                    Image(it.asImageBitmap(), contentDescription = label, modifier = Modifier.size(56.dp), contentScale = ContentScale.Fit)
+                }
+            }
+        }
+        Text(label, style = MaterialTheme.typography.labelSmall)
     }
 }
 
@@ -1183,42 +1529,51 @@ private fun FixedIconPreviewPicker(
 private fun GeneratedWallpaperStudio(options: com.nathanhanapps.nebulaThemePorter.core.BuildOptions, viewModel: PorterViewModel) {
     val settings = options.generatedWallpaper
     var editingColor by rememberSaveable { mutableStateOf<Int?>(null) }
+    var expanded by rememberSaveable { mutableStateOf(false) }
     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-    Text(stringResource(R.string.gradient_studio), style = MaterialTheme.typography.titleSmall)
-    Text(stringResource(R.string.gradient_colors), style = MaterialTheme.typography.labelLarge)
-    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        GradientColorChip(stringResource(R.string.gradient_color_a), settings.colorA) { editingColor = 0 }
-        GradientColorChip(stringResource(R.string.gradient_color_b), settings.colorB) { editingColor = 1 }
-        GradientColorChip(stringResource(R.string.gradient_color_c), settings.colorC) { editingColor = 2 }
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(stringResource(R.string.gradient_studio), style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+        Text(if (expanded) "⌃" else "⌄", style = MaterialTheme.typography.titleLarge)
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilledTonalButton(onClick = viewModel::randomizeGeneratedWallpaperColors) { Text(stringResource(R.string.randomize_colors)) }
-        FilledTonalButton(onClick = viewModel::shuffleGeneratedWallpaperPlacement) { Text(stringResource(R.string.shuffle_placement)) }
-    }
-    Hint(stringResource(R.string.gradient_random_detail))
-    Text(stringResource(R.string.gradient_mix), style = MaterialTheme.typography.labelLarge)
-    ChoiceChips(
-        listOf(
-            GradientMix.LINEAR to stringResource(R.string.gradient_mix_linear),
-            GradientMix.RADIAL to stringResource(R.string.gradient_mix_radial),
-            GradientMix.BLOBS to stringResource(R.string.gradient_mix_blobs),
-        ),
-        settings.mix,
-        viewModel::setGeneratedWallpaperMix,
-    )
-    if (settings.mix == GradientMix.LINEAR || settings.mix == GradientMix.RADIAL) {
-        Text(stringResource(R.string.gradient_angle, settings.angle.roundToInt()), style = MaterialTheme.typography.labelLarge)
-        Slider(settings.angle, viewModel::setGeneratedWallpaperAngle, valueRange = 0f..360f)
-    }
-    Text(stringResource(R.string.gradient_blur, (settings.blur * 100).roundToInt()), style = MaterialTheme.typography.labelLarge)
-    Slider(settings.blur, viewModel::setGeneratedWallpaperBlur, valueRange = 0f..1f)
-    editingColor?.let { slot ->
-        val initial = when (slot) {
-            0 -> settings.colorA
-            1 -> settings.colorB
-            else -> settings.colorC
+    if (expanded) {
+        Text(stringResource(R.string.gradient_colors), style = MaterialTheme.typography.labelLarge)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GradientColorChip(stringResource(R.string.gradient_color_a), settings.colorA) { editingColor = 0 }
+            GradientColorChip(stringResource(R.string.gradient_color_b), settings.colorB) { editingColor = 1 }
+            GradientColorChip(stringResource(R.string.gradient_color_c), settings.colorC) { editingColor = 2 }
         }
-        ColorPickerDialog(initial, onSelect = { viewModel.setGeneratedWallpaperColor(slot, it) }, onDismiss = { editingColor = null })
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilledTonalButton(onClick = viewModel::randomizeGeneratedWallpaperColors) { Text(stringResource(R.string.randomize_colors)) }
+            FilledTonalButton(onClick = viewModel::shuffleGeneratedWallpaperPlacement) { Text(stringResource(R.string.shuffle_placement)) }
+        }
+        Hint(stringResource(R.string.gradient_random_detail))
+        Text(stringResource(R.string.gradient_mix), style = MaterialTheme.typography.labelLarge)
+        ChoiceChips(
+            listOf(
+                GradientMix.LINEAR to stringResource(R.string.gradient_mix_linear),
+                GradientMix.RADIAL to stringResource(R.string.gradient_mix_radial),
+                GradientMix.BLOBS to stringResource(R.string.gradient_mix_blobs),
+            ),
+            settings.mix,
+            viewModel::setGeneratedWallpaperMix,
+        )
+        if (settings.mix == GradientMix.LINEAR || settings.mix == GradientMix.RADIAL) {
+            Text(stringResource(R.string.gradient_angle, settings.angle.roundToInt()), style = MaterialTheme.typography.labelLarge)
+            Slider(settings.angle, viewModel::setGeneratedWallpaperAngle, valueRange = 0f..360f)
+        }
+        Text(stringResource(R.string.gradient_blur, (settings.blur * 100).roundToInt()), style = MaterialTheme.typography.labelLarge)
+        Slider(settings.blur, viewModel::setGeneratedWallpaperBlur, valueRange = 0f..1f)
+        editingColor?.let { slot ->
+            val initial = when (slot) {
+                0 -> settings.colorA
+                1 -> settings.colorB
+                else -> settings.colorC
+            }
+            ColorPickerDialog(initial, onSelect = { viewModel.setGeneratedWallpaperColor(slot, it) }, onDismiss = { editingColor = null })
+        }
     }
 }
 
@@ -1415,39 +1770,47 @@ private fun SwitchRow(title: String, detail: String, checked: Boolean, onChange:
     }
 }
 
+private const val AppGridColumns = 4
+
+/** Lays out up to [AppGridColumns] grid cells in a row, padding out a short trailing row so cells stay a fixed width. */
 @Composable
-private fun SystemAppRow(app: ZteSystemApp, sourceId: String?, fallbackEnabled: Boolean, viewModel: PorterViewModel, onClick: () -> Unit) {
+private fun AppGridRow(cellCount: Int, content: @Composable RowScope.() -> Unit) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        content()
+        repeat(AppGridColumns - cellCount) { Spacer(Modifier.weight(1f)) }
+    }
+}
+
+@Composable
+private fun RowScope.SystemAppGridCell(
+    app: ZteSystemApp,
+    sourceId: String?,
+    fallbackEnabled: Boolean,
+    tintColor: Long?,
+    tintStrength: Float,
+    curve: GrayscaleCurve,
+    fixedOptions: BuildOptions,
+    selected: Boolean,
+    viewModel: PorterViewModel,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
     val key = remember(sourceId) { sourceId?.let(viewModel::iconKey) }
     val isFallback = key == null && sourceId == null && fallbackEnabled
     val language = LocalConfiguration.current.locales[0].language
-    ElevatedCard(
+    AppGridCell(
+        label = if (language == Locale.CHINESE.language) app.labelZh else app.labelEn,
+        thumbnailId = sourceId,
+        isFallback = isFallback,
+        tintColor = tintColor,
+        tintStrength = tintStrength,
+        curve = curve,
+        fixedOptions = fixedOptions,
+        selected = selected,
+        viewModel = viewModel,
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 0.dp),
-    ) {
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Thumbnail(sourceId, 48, viewModel)
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(if (language == Locale.CHINESE.language) app.labelZh else app.labelEn, style = MaterialTheme.typography.titleSmall)
-                Text(
-                    when {
-                        key != null -> key
-                        isFallback -> stringResource(R.string.fallback_device_icon)
-                        else -> stringResource(R.string.launcher_default)
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (isFallback) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            Text("›", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
+        onLongClick = onLongClick,
+    )
 }
 
 @Composable
@@ -1503,58 +1866,115 @@ private fun CollapsibleAppsHeader(title: String, expanded: Boolean, detail: Stri
 }
 
 @Composable
-private fun UserAppRow(
+private fun RowScope.UserAppGridCell(
     app: InstalledApps.LauncherApp,
     sourceId: String?,
     manuallyAssigned: Boolean,
     fallbackEnabled: Boolean,
+    tintColor: Long?,
+    tintStrength: Float,
+    curve: GrayscaleCurve,
+    fixedOptions: BuildOptions,
+    selected: Boolean,
     viewModel: PorterViewModel,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
 ) {
-    val key = remember(sourceId) { sourceId?.let(viewModel::iconKey) }
     val isFallback = sourceId == null && fallbackEnabled
     val thumbnailId = sourceId ?: (if (fallbackEnabled) DeviceIconId.of(app.packageName, app.activityName) else null)
-    ElevatedCard(
+    AppGridCell(
+        label = app.label,
+        thumbnailId = thumbnailId,
+        isFallback = isFallback,
+        statusColor = if (manuallyAssigned) MaterialTheme.colorScheme.primary else null,
+        tintColor = tintColor,
+        tintStrength = tintStrength,
+        curve = curve,
+        fixedOptions = fixedOptions,
+        selected = selected,
+        viewModel = viewModel,
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 0.dp),
+        onLongClick = onLongClick,
+    )
+}
+
+/**
+ * One icon + name cell shared by the system- and user-app grids; [statusColor], if set, marks a manual override.
+ * Long-pressing any cell enters batch curve-selection mode ([selected]); while it's active a tap toggles
+ * selection instead of opening the icon picker - see the `selectedGridKeys`-driven callbacks in [ConfigureScreen].
+ */
+@Composable
+private fun RowScope.AppGridCell(
+    label: String,
+    thumbnailId: String?,
+    isFallback: Boolean,
+    tintColor: Long?,
+    tintStrength: Float,
+    curve: GrayscaleCurve,
+    fixedOptions: BuildOptions,
+    selected: Boolean,
+    viewModel: PorterViewModel,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    statusColor: Color? = null,
+) {
+    Column(
+        modifier = Modifier
+            .weight(1f)
+            .clip(MaterialTheme.shapes.medium)
+            .then(if (selected) Modifier.background(MaterialTheme.colorScheme.primaryContainer) else Modifier)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Thumbnail(thumbnailId, 48, viewModel)
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(app.label, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    when {
-                        key != null -> key
-                        isFallback -> stringResource(R.string.fallback_device_icon)
-                        else -> stringResource(R.string.no_source_icon)
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (isFallback) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    if (manuallyAssigned) stringResource(R.string.manual_override) else app.packageName,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (manuallyAssigned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+        Box {
+            Thumbnail(thumbnailId, 48, viewModel, tintColor, tintStrength, curve, fixedOptions)
+            val badgeColor = statusColor ?: if (isFallback) MaterialTheme.colorScheme.tertiary else null
+            if (selected) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .size(16.dp)
+                        .background(MaterialTheme.colorScheme.primary, CircleShape)
+                        .border(1.dp, MaterialTheme.colorScheme.surfaceContainerLow, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("✓", color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.labelSmall)
+                }
+            } else if (badgeColor != null) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .size(10.dp)
+                        .background(badgeColor, CircleShape)
+                        .border(1.dp, MaterialTheme.colorScheme.surfaceContainerLow, CircleShape),
                 )
             }
-            Spacer(Modifier.width(8.dp))
-            Text("›", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
 @Composable
-private fun Thumbnail(imageId: String?, sizeDp: Int, viewModel: PorterViewModel) {
-    val bitmap by produceState<ImageBitmap?>(initialValue = null, imageId) {
-        value = imageId?.let { viewModel.thumbnail(it) }?.asImageBitmap()
+private fun Thumbnail(
+    imageId: String?,
+    sizeDp: Int,
+    viewModel: PorterViewModel,
+    tintColor: Long? = null,
+    tintStrength: Float = 1f,
+    curve: GrayscaleCurve = GrayscaleCurve(),
+    fixedOptions: BuildOptions? = null,
+) {
+    val ownBackground = fixedOptions?.generatedIconOwnBackground ?: true
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, imageId, tintColor, tintStrength, curve, fixedOptions, ownBackground) {
+        value = imageId?.let { viewModel.thumbnail(it, tintColor?.toInt(), tintStrength, curve, fixedOptions, ownBackground) }?.asImageBitmap()
     }
     Box(
         modifier = Modifier
@@ -1574,6 +1994,9 @@ private fun IconPickerDialog(
     viewModel: PorterViewModel,
     onAssign: (String?) -> Unit,
     onDismiss: () -> Unit,
+    tintColor: Long? = null,
+    tintStrength: Float = 1f,
+    fixedOptions: BuildOptions? = null,
 ) {
     var query by remember { mutableStateOf("") }
     val icons = remember(query) { viewModel.searchIcons(query) }
@@ -1632,7 +2055,7 @@ private fun IconPickerDialog(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
-                                Thumbnail(icon.id, 56, viewModel)
+                                Thumbnail(icon.id, 56, viewModel, tintColor, tintStrength, fixedOptions = fixedOptions)
                                 Text(
                                     icon.key.substringAfterLast('.'),
                                     style = MaterialTheme.typography.labelSmall,

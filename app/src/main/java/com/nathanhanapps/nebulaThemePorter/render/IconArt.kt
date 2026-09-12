@@ -33,9 +33,15 @@ object FixedIconArt {
         backgroundScale: Float,
         padColor: Int,
         iconBack: Bitmap?,
+        /** [com.nathanhanapps.nebulaThemePorter.core.GrayscaleCurve.lut], applied to [source] before [tintColor]
+         * multiplies it, so a per-app tone tweak can even out how differently-lit source icons end up looking
+         * once every icon shares the same tint. */
+        curveLut: IntArray? = null,
     ): Bitmap {
         val size = NebulaSpec.FIXED_ICON_SIZE
-        val artwork = tintColor?.let { Bitmaps.tint(source, it, tintStrength) } ?: source
+        val prepared = curveLut?.let { Bitmaps.curve(source, it) } ?: source
+        val artwork = tintColor?.let { Bitmaps.tint(prepared, it, tintStrength) } ?: prepared
+        if (prepared !== source && prepared !== artwork) prepared.recycle()
         if (shape.isOriginal) return Bitmaps.fit(artwork, size).also { if (artwork !== source) artwork.recycle() }
         val backgroundSize = (size * backgroundScale.coerceIn(0.35f, 1.25f)).toInt().coerceAtLeast(1)
         val iconFraction = iconScale.coerceIn(0.25f, 1.25f)
@@ -43,7 +49,10 @@ object FixedIconArt {
         val out = Bitmaps.square(size)
         when (composition) {
             FixedIconComposition.OVERLAY -> {
-                drawCentered(Canvas(out), plate(shape, backgroundSize, padColor, iconBack))
+                // Flattened to opaque: the plate is the only thing on screen showing the chosen shape here (the
+                // glyph sits smaller on top, untouched), so a pack iconBack's own baked-in silhouette must not
+                // survive the clip below unflattened, or every shape choice ends up looking like the pack's own.
+                drawCentered(Canvas(out), plate(shape, backgroundSize, padColor, iconBack, flatten = true))
                 // A plate is an overlay treatment, not a veil over the imported glyph. Keep the glyph on top,
                 // with its own outline untouched, so the selected shape reads from the plate's margin instead.
                 val icon = Bitmaps.fit(artwork, size, iconFraction)
@@ -51,16 +60,22 @@ object FixedIconArt {
                 icon.recycle()
             }
             FixedIconComposition.COVER -> {
-                // A cropped icon with its own transparent margins would otherwise leave bare gaps; give every
-                // icon the same plate Overlay uses so there's always a background under it.
-                drawCentered(Canvas(out), plate(shape, backgroundSize, padColor, iconBack))
-                val covered = Bitmaps.cover(artwork, backgroundSize, backgroundSize)
+                drawCentered(Canvas(out), plate(shape, backgroundSize, padColor, iconBack, flatten = true))
+                // Many pack icons are themselves pre-shaped artwork - a full square canvas with a rounded
+                // background already baked in and transparent padding around it - not a bare glyph. Covering
+                // that raw canvas only rescales its outer bounding box, so the baked-in shape (and the padding
+                // around it) survives untouched and the later clip has nothing real left to cut: every chosen
+                // shape ends up looking like the pack's own. Trimming to the actual opaque content first means
+                // the cover scales the real artwork, not its padding, so the clip governs the outline again.
+                val trimmed = Bitmaps.trimToSquare(artwork) ?: artwork
+                val covered = Bitmaps.cover(trimmed, backgroundSize, backgroundSize)
+                if (trimmed !== artwork) trimmed.recycle()
                 val clipped = Shapes.clip(covered, shape, backgroundSize)
                 covered.recycle()
                 drawCentered(Canvas(out), clipped)
             }
             FixedIconComposition.CLIP -> {
-                drawCentered(Canvas(out), plate(shape, backgroundSize, padColor, iconBack))
+                drawCentered(Canvas(out), plate(shape, backgroundSize, padColor, iconBack, flatten = true))
                 val icon = Bitmaps.fit(artwork, backgroundSize, iconFraction / backgroundScale.coerceAtLeast(0.35f))
                 val clipped = Shapes.clip(icon, shape, backgroundSize)
                 icon.recycle()
@@ -73,10 +88,11 @@ object FixedIconArt {
 
     // Tinting a pack/custom iconBack (rather than using it as-is) keeps its own shading/pattern while still
     // guaranteeing the selected background color is visible.
-    private fun plate(shape: FixedIconShape, size: Int, color: Int, iconBack: Bitmap?): Bitmap {
+    private fun plate(shape: FixedIconShape, size: Int, color: Int, iconBack: Bitmap?, flatten: Boolean): Bitmap {
         val content = iconBack?.let {
             val covered = Bitmaps.cover(it, size, size)
-            Bitmaps.tint(covered, color, 1f).also { covered.recycle() }
+            val tinted = Bitmaps.tint(covered, color, 1f).also { covered.recycle() }
+            if (flatten) Bitmaps.opaque(tinted, color).also { tinted.recycle() } else tinted
         } ?: Bitmaps.solid(size, color)
         return Shapes.clip(content, shape, size).also { content.recycle() }
     }
