@@ -42,7 +42,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" \
-            app/build/outputs/apk/release/app-release.apk \
-            --title "${{ github.ref_name }}" \
-            --generate-notes
+          notes="docs/release-notes/${{ github.ref_name }}.md"
+          if [ -f "$notes" ]; then
+            gh release create "${{ github.ref_name }}" \
+              app/build/outputs/apk/release/app-release.apk \
+              --title "${{ github.ref_name }}" \
+              --notes-file "$notes"
+          else
+            gh release create "${{ github.ref_name }}" \
+              app/build/outputs/apk/release/app-release.apk \
+              --title "${{ github.ref_name }}" \
+              --generate-notes
+          fi

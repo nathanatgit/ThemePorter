@@ -24,6 +24,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -122,6 +123,7 @@ import com.nathanhanapps.nebulaThemePorter.core.FixedIconComposition
 import com.nathanhanapps.nebulaThemePorter.core.GradientMix
 import com.nathanhanapps.nebulaThemePorter.core.GrayscaleCurve
 import com.nathanhanapps.nebulaThemePorter.core.NebulaSpec
+import com.nathanhanapps.nebulaThemePorter.core.TintBlendMode
 import com.nathanhanapps.nebulaThemePorter.core.ZteSystemApp
 import com.nathanhanapps.nebulaThemePorter.core.ZteSystemApps
 import com.nathanhanapps.nebulaThemePorter.render.Shapes
@@ -600,11 +602,9 @@ private fun ConfigureScreen(
     // pack; remember it per loaded source instead of recomputing on every recomposition (e.g. every keystroke
     // in an unrelated text field), which was previously making typing feel laggy once a big source was loaded.
     val fixedPreviewIconChoices = remember(summary) { viewModel.fixedPreviewIconChoices() }
-    val fixedPreviewIconId = state.fixedPreviewIconId ?: fixedPreviewIconChoices.firstOrNull()
     var pickerSystemAppId by rememberSaveable { mutableStateOf<String?>(null) }
     var systemAppsExpanded by rememberSaveable { mutableStateOf(false) }
     var pickerUserStem by rememberSaveable { mutableStateOf<String?>(null) }
-    var pickFixedPreviewIcon by rememberSaveable { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(state.error) {
         state.error?.let {
@@ -773,25 +773,19 @@ private fun ConfigureScreen(
             }
             item {
                 Section(stringResource(R.string.fixed_icon_shape)) {
-                    Hint(stringResource(R.string.fixed_shape_detail))
                     FixedShapePicker(options.fixedShape, viewModel::setFixedShape, state.fixedBackgroundName, onPickFixedBackground, viewModel::clearFixedBackground)
-                    Hint(
-                        if (options.fixedShape.isOriginal) stringResource(R.string.fixed_original_detail)
-                        else stringResource(R.string.fixed_shape_rendered_detail),
-                    )
+                    Hint(stringResource(R.string.fixed_shape_section_detail))
                 }
             }
             if (!options.fixedShape.isOriginal) {
                 item {
                     FixedIconCompositionSection(
                         options,
-                        fixedPreviewIconId,
                         fixedPreviewIconChoices,
                         viewModel,
                         state.wallpaperPalette,
                         hasCalendar = summary.hasCalendar,
                         hasClock = summary.hasClock,
-                        onManualPreviewPick = { pickFixedPreviewIcon = true },
                     )
                 }
             }
@@ -942,18 +936,6 @@ private fun ConfigureScreen(
                 onDismiss = { pickerUserStem = null },
             )
         }
-    }
-    if (pickFixedPreviewIcon) {
-        IconPickerDialog(
-            title = stringResource(R.string.fixed_icon_preview_pick),
-            subtitle = null,
-            viewModel = viewModel,
-            tintColor = options.fixedTintColor,
-            tintStrength = options.fixedTintStrength,
-            fixedOptions = options,
-            onAssign = { viewModel.setFixedPreviewIcon(it); pickFixedPreviewIcon = false },
-            onDismiss = { pickFixedPreviewIcon = false },
-        )
     }
 }
 
@@ -1289,7 +1271,6 @@ private fun FixedShapePicker(
             }
         }
     }
-    Hint(stringResource(R.string.fixed_background_art_detail))
     customBackgroundName?.let {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(it, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1301,17 +1282,14 @@ private fun FixedShapePicker(
 @Composable
 private fun FixedIconCompositionSection(
     options: com.nathanhanapps.nebulaThemePorter.core.BuildOptions,
-    previewIconId: String?,
     previewIconChoices: List<String>,
     viewModel: PorterViewModel,
     wallpaperPalette: List<Long>,
     hasCalendar: Boolean,
     hasClock: Boolean,
-    onManualPreviewPick: () -> Unit,
 ) {
     Section(stringResource(R.string.fixed_icon_composition)) {
-        FixedIconPreviewPicker(previewIconId, previewIconChoices, viewModel, onManualPreviewPick)
-        FixedIconPreview(previewIconId, options, viewModel)
+        FixedIconPreviewGrid(options, previewIconChoices, viewModel, hasCalendar, hasClock)
         ChoiceChips(
             listOf(
                 FixedIconComposition.OVERLAY to stringResource(R.string.fixed_comp_overlay),
@@ -1328,68 +1306,110 @@ private fun FixedIconCompositionSection(
                 FixedIconComposition.CLIP -> stringResource(R.string.fixed_comp_clip_detail)
             },
         )
-        if (options.fixedComposition != FixedIconComposition.COVER) {
-            Text(stringResource(R.string.fixed_icon_size, (options.fixedIconScale * 100).roundToInt()), style = MaterialTheme.typography.labelLarge)
-            Slider(options.fixedIconScale, viewModel::setFixedIconScale, valueRange = 0.25f..1.25f)
-        }
         if (options.fixedComposition == FixedIconComposition.OVERLAY) {
             Text(stringResource(R.string.fixed_icon_alpha, (options.fixedIconAlpha * 100).roundToInt()), style = MaterialTheme.typography.labelLarge)
             Slider(options.fixedIconAlpha, viewModel::setFixedIconAlpha, valueRange = 0f..1f)
         }
+        FixedIconSizeControls(options, viewModel)
+        FixedTintPaletteControls(options, wallpaperPalette, viewModel)
+    }
+}
+
+/** Icon size and background size folded together behind one collapsed toggle, since they're adjusted together far
+ * less often than composition/tint - keeping both expanded by default just pushed those more common controls
+ * further down the section for no benefit. */
+@Composable
+private fun FixedIconSizeControls(options: com.nathanhanapps.nebulaThemePorter.core.BuildOptions, viewModel: PorterViewModel) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(stringResource(R.string.fixed_size_controls), style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+        Text(if (expanded) "⌃" else "⌄", style = MaterialTheme.typography.titleLarge)
+    }
+    if (expanded) {
+        if (options.fixedComposition != FixedIconComposition.COVER) {
+            Text(stringResource(R.string.fixed_icon_size, (options.fixedIconScale * 100).roundToInt()), style = MaterialTheme.typography.labelLarge)
+            Slider(options.fixedIconScale, viewModel::setFixedIconScale, valueRange = 0.25f..1.25f)
+        }
         Text(stringResource(R.string.fixed_background_size, (options.fixedBackgroundScale * 100).roundToInt()), style = MaterialTheme.typography.labelLarge)
         Slider(options.fixedBackgroundScale, viewModel::setFixedBackgroundScale, valueRange = 0.35f..1.25f)
-        FixedTintPaletteControls(options, wallpaperPalette, viewModel)
-        if (hasCalendar || hasClock || options.generateMissingDynamicIcons) {
-            DynamicIconPreviewRow(options, viewModel)
-        }
     }
 }
 
 /**
- * Calendar/clock always get the same tint as every other icon, automatically - there is no separate toggle for
- * them. This just makes that visible ahead of a build (reusing the exact strip-generation code the real build
- * uses, cropped down to one representative frame each - see [PorterViewModel.calendarIconPreview] /
- * [PorterViewModel.clockIconPreview]) so a tint that doesn't suit them can be caught and adjusted here instead
- * of only after opening the finished theme.
+ * A live, at-a-glance preview: one enlarged rendition of the first representative icon, then the same five
+ * representative imported icons plus (when relevant) the calendar and clock as a strip of small tiles - every
+ * tile rendered through the exact same shape/tint/curve pipeline the real build uses, not one shared "pick an
+ * icon to preview" box, so a composition/tint/shape change shows its effect across several different icons and
+ * the dynamic assets all at once. Calendar/clock always pick up the same tint as every other icon automatically
+ * (there's no separate toggle for them); this is what catches a tint that doesn't suit them before building,
+ * instead of only after opening the finished theme.
  */
 @Composable
-private fun DynamicIconPreviewRow(options: com.nathanhanapps.nebulaThemePorter.core.BuildOptions, viewModel: PorterViewModel) {
-    val calendar by produceState<android.graphics.Bitmap?>(
-        initialValue = null,
-        options.fixedShape, options.fixedComposition, options.fixedTintColor, options.fixedTintStrength, options.generateMissingDynamicIcons,
-    ) {
-        delay(90)
-        value = viewModel.calendarIconPreview(options)
-    }
-    val clock by produceState<android.graphics.Bitmap?>(
-        initialValue = null,
-        options.fixedShape, options.fixedComposition, options.fixedTintColor, options.fixedTintStrength, options.generateMissingDynamicIcons,
-    ) {
-        delay(90)
-        value = viewModel.clockIconPreview(options)
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        HorizontalDivider(modifier = Modifier.padding(top = 4.dp))
-        Text(stringResource(R.string.dynamic_icon_preview), style = MaterialTheme.typography.titleSmall)
-        Hint(stringResource(R.string.dynamic_icon_preview_detail))
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            DynamicPreviewTile(stringResource(R.string.calendar), calendar)
-            DynamicPreviewTile(stringResource(R.string.clock), clock)
+private fun FixedIconPreviewGrid(
+    options: com.nathanhanapps.nebulaThemePorter.core.BuildOptions,
+    previewIconChoices: List<String>,
+    viewModel: PorterViewModel,
+    hasCalendar: Boolean,
+    hasClock: Boolean,
+) {
+    Text(stringResource(R.string.fixed_icon_preview_pick), style = MaterialTheme.typography.labelLarge)
+    previewIconChoices.firstOrNull()?.let { primary ->
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Thumbnail(primary, 96, viewModel, options.fixedTintColor, options.fixedTintStrength, fixedOptions = options)
         }
+    }
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        previewIconChoices.forEach { id ->
+            PreviewCell {
+                Thumbnail(id, 48, viewModel, options.fixedTintColor, options.fixedTintStrength, fixedOptions = options)
+            }
+        }
+        if (hasCalendar || options.generateMissingDynamicIcons) {
+            DynamicPreviewCell(stringResource(R.string.calendar), options, viewModel::calendarIconPreview)
+        }
+        if (hasClock || options.generateMissingDynamicIcons) {
+            DynamicPreviewCell(stringResource(R.string.clock), options, viewModel::clockIconPreview)
+        }
+    }
+    Hint(stringResource(R.string.fixed_icon_preview_pick_detail))
+}
+
+@Composable
+private fun DynamicPreviewCell(
+    label: String,
+    options: com.nathanhanapps.nebulaThemePorter.core.BuildOptions,
+    preview: suspend (com.nathanhanapps.nebulaThemePorter.core.BuildOptions) -> android.graphics.Bitmap?,
+) {
+    val bitmap by produceState<android.graphics.Bitmap?>(
+        initialValue = null,
+        options.fixedShape, options.fixedComposition, options.fixedTintColor, options.fixedTintStrength, options.fixedTintBlendMode,
+        options.fixedIconScale, options.fixedIconAlpha, options.fixedBackgroundScale, options.padBackground, options.generateMissingDynamicIcons,
+    ) {
+        delay(90)
+        value = preview(options)
+    }
+    PreviewCell(label) {
+        bitmap?.let { Image(it.asImageBitmap(), contentDescription = label, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit) }
     }
 }
 
 @Composable
-private fun DynamicPreviewTile(label: String, bitmap: android.graphics.Bitmap?) {
+private fun PreviewCell(label: String? = null, content: @Composable BoxScope.() -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerHighest) {
-            Box(Modifier.size(72.dp), contentAlignment = Alignment.Center) {
-                bitmap?.let {
-                    Image(it.asImageBitmap(), contentDescription = label, modifier = Modifier.size(56.dp), contentScale = ContentScale.Fit)
-                }
-            }
+        Surface(
+            modifier = Modifier.size(58.dp),
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center, content = content)
         }
-        Text(label, style = MaterialTheme.typography.labelSmall)
+        if (label != null) {
+            Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 
@@ -1419,7 +1439,7 @@ private fun FixedTintPaletteControls(
             title = stringResource(R.string.fixed_icon_tint),
             detail = stringResource(R.string.fixed_icon_tint_detail),
         ) {
-            IconTintControls(options.fixedTintColor, options.fixedTintStrength, palette, viewModel)
+            IconTintControls(options.fixedTintColor, options.fixedTintStrength, options.fixedTintBlendMode, palette, viewModel)
         }
     }
 }
@@ -1452,7 +1472,7 @@ private fun CollapsibleTintPanel(
 }
 
 @Composable
-private fun IconTintControls(selected: Long?, strength: Float, palette: List<Long>, viewModel: PorterViewModel) {
+private fun IconTintControls(selected: Long?, strength: Float, blendMode: TintBlendMode, palette: List<Long>, viewModel: PorterViewModel) {
     val fallback = listOf(
         MaterialTheme.colorScheme.primary.toArgb().toLong(),
         MaterialTheme.colorScheme.secondary.toArgb().toLong(),
@@ -1465,6 +1485,17 @@ private fun IconTintControls(selected: Long?, strength: Float, palette: List<Lon
         colors.forEach { color -> TintColorChip(color, selected) { viewModel.setFixedTintColor(it) } }
     }
     if (selected != null) {
+        Text(stringResource(R.string.fixed_tint_blend_mode), style = MaterialTheme.typography.labelLarge)
+        ChoiceChips(
+            listOf(
+                TintBlendMode.MULTIPLY to stringResource(R.string.tint_blend_multiply),
+                TintBlendMode.OVERLAY to stringResource(R.string.tint_blend_overlay),
+                TintBlendMode.SOFT_LIGHT to stringResource(R.string.tint_blend_soft_light),
+                TintBlendMode.LIGHTEN to stringResource(R.string.tint_blend_lighten),
+            ),
+            blendMode,
+            viewModel::setFixedTintBlendMode,
+        )
         val hsv = remember(selected) { FloatArray(3).also { android.graphics.Color.colorToHSV(selected.toInt(), it) } }
         Text(stringResource(R.string.fixed_tint_hue, hsv[0].roundToInt()), style = MaterialTheme.typography.labelLarge)
         Slider(hsv[0], viewModel::setFixedTintHue, valueRange = 0f..360f)
@@ -1490,39 +1521,6 @@ private fun TintColorChip(color: Long, selected: Long?, onSelect: (Long) -> Unit
             )
         },
     )
-}
-
-@Composable
-private fun FixedIconPreviewPicker(
-    selectedId: String?,
-    iconIds: List<String>,
-    viewModel: PorterViewModel,
-    onManualPick: () -> Unit,
-) {
-    Text(stringResource(R.string.fixed_icon_preview_pick), style = MaterialTheme.typography.labelLarge)
-    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        iconIds.forEach { id ->
-            val selected = id == selectedId
-            Surface(
-                onClick = { viewModel.setFixedPreviewIcon(id) },
-                modifier = Modifier.size(58.dp),
-                shape = MaterialTheme.shapes.medium,
-                color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
-                border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
-            ) {
-                Thumbnail(id, 42, viewModel)
-            }
-        }
-        Surface(
-            onClick = onManualPick,
-            modifier = Modifier.size(58.dp),
-            shape = MaterialTheme.shapes.medium,
-            color = MaterialTheme.colorScheme.secondaryContainer,
-        ) {
-            Box(contentAlignment = Alignment.Center) { Text("+", style = MaterialTheme.typography.headlineSmall) }
-        }
-    }
-    Hint(stringResource(R.string.fixed_icon_preview_pick_detail))
 }
 
 @Composable
@@ -1590,44 +1588,6 @@ private fun GradientColorChip(label: String, color: Long, onClick: () -> Unit) {
             )
         },
     )
-}
-
-@Composable
-private fun FixedIconPreview(imageId: String?, options: com.nathanhanapps.nebulaThemePorter.core.BuildOptions, viewModel: PorterViewModel) {
-    val rendered by produceState<android.graphics.Bitmap?>(
-        initialValue = null,
-        imageId,
-        options.fixedShape,
-        options.fixedComposition,
-        options.fixedIconScale,
-        options.fixedIconAlpha,
-        options.fixedTintColor,
-        options.fixedTintStrength,
-        options.fixedBackgroundScale,
-        options.padBackground,
-    ) {
-        // Coalesce a drag into one background preview render instead of rendering a bitmap for every tick.
-        if (imageId != null) {
-            delay(90)
-            value = viewModel.fixedIconPreview(imageId, options)
-        }
-    }
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-    ) {
-        Box(Modifier.fillMaxWidth().height(184.dp), contentAlignment = Alignment.Center) {
-            rendered?.let { bitmap ->
-                Image(
-                    bitmap.asImageBitmap(),
-                    contentDescription = stringResource(R.string.fixed_icon_preview),
-                    modifier = Modifier.size(160.dp),
-                    contentScale = ContentScale.Fit,
-                )
-            } ?: Text(stringResource(R.string.fixed_icon_preview_loading), style = MaterialTheme.typography.bodySmall)
-        }
-    }
 }
 
 @Composable
@@ -1973,8 +1933,16 @@ private fun Thumbnail(
     fixedOptions: BuildOptions? = null,
 ) {
     val ownBackground = fixedOptions?.generatedIconOwnBackground ?: true
-    val bitmap by produceState<ImageBitmap?>(initialValue = null, imageId, tintColor, tintStrength, curve, fixedOptions, ownBackground) {
-        value = imageId?.let { viewModel.thumbnail(it, tintColor?.toInt(), tintStrength, curve, fixedOptions, ownBackground) }?.asImageBitmap()
+    val tintBlendMode = fixedOptions?.fixedTintBlendMode ?: TintBlendMode.MULTIPLY
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, imageId, tintColor, tintStrength, curve, fixedOptions, ownBackground, tintBlendMode) {
+        // Coalesce a slider drag into one render per settle. Every tick mints a new BuildOptions, so all of the
+        // preview tiles and every visible grid cell re-key at once - and a superseded render still runs to
+        // completion, because the pixel loops inside it have no suspension point to cancel at, so without this
+        // a drag buries Dispatchers.Default under renders whose results are already stale.
+        // produceState keeps the last value across a key change, so this waits only on a re-render: the first
+        // paint of a tile that has just scrolled into view stays immediate.
+        if (value != null) delay(90)
+        value = imageId?.let { viewModel.thumbnail(it, tintColor?.toInt(), tintStrength, curve, fixedOptions, ownBackground, tintBlendMode) }?.asImageBitmap()
     }
     Box(
         modifier = Modifier

@@ -76,6 +76,44 @@ enum class FixedIconComposition {
     CLIP,
 }
 
+/**
+ * How an icon's own grayscale shading combines with the selected tint color - the same choice Photoshop's layer
+ * blend modes offer, applied per-pixel between the icon's luminance and the tint color's own RGB channels.
+ */
+enum class TintBlendMode {
+    /** grayscale * tint / 255 - white becomes the tint color, black stays black. The long-standing default. */
+    MULTIPLY,
+    /** Darkens below 50% grey, lightens above it - punchier contrast than Multiply. */
+    OVERLAY,
+    /** Like Overlay but gentler, without Overlay's hard midpoint - a subtler recolor. */
+    SOFT_LIGHT,
+    /** Keeps whichever of the icon's shading or the tint color is brighter, per channel. */
+    LIGHTEN,
+    ;
+
+    /**
+     * [base] (the icon's own grayscale) and [color] (one tint channel) are 0..255; returns the blended 0..255
+     * result. Overlay/Soft Light match the W3C compositing spec, which is also what Photoshop implements for
+     * those modes. Pure math (no Android dependency) so it can be unit tested directly.
+     */
+    fun blend(base: Int, color: Int): Int {
+        val a = base / 255f
+        val b = color / 255f
+        val result = when (this) {
+            MULTIPLY -> a * b
+            OVERLAY -> if (a <= 0.5f) 2 * a * b else 1f - 2f * (1f - a) * (1f - b)
+            SOFT_LIGHT -> if (b <= 0.5f) {
+                a - (1f - 2f * b) * a * (1f - a)
+            } else {
+                val d = if (a <= 0.25f) ((16f * a - 12f) * a + 4f) * a else kotlin.math.sqrt(a)
+                a + (2f * b - 1f) * (d - a)
+            }
+            LIGHTEN -> maxOf(a, b)
+        }
+        return (result * 255f).let { kotlin.math.round(it).toInt() }.coerceIn(0, 255)
+    }
+}
+
 /** How the generated wallpaper combines its selected colors. */
 enum class GradientMix {
     LINEAR,
@@ -114,6 +152,8 @@ data class BuildOptions(
     val fixedTintColor: Long? = null,
     /** Mix ratio between the imported RGB values and [fixedTintColor]. */
     val fixedTintStrength: Float = 1f,
+    /** How the icon's own grayscale shading combines with [fixedTintColor]. */
+    val fixedTintBlendMode: TintBlendMode = TintBlendMode.MULTIPLY,
     /** Side of the foreground icon as a fraction of the final fixed PNG. */
     val fixedIconScale: Float = 0.66f,
     /** Strength of the icon alpha when mixing it with a Cutout or Overlay plate. */

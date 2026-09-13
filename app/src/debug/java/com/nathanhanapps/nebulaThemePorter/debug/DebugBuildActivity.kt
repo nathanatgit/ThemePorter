@@ -2,6 +2,8 @@ package com.nathanhanapps.nebulaThemePorter.debug
 
 import android.os.Bundle
 import android.os.SystemClock
+import android.widget.ScrollView
+import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.lifecycle.lifecycleScope
 import com.nathanhanapps.nebulaThemePorter.build.ThemeBuilder
@@ -11,11 +13,14 @@ import com.nathanhanapps.nebulaThemePorter.core.FixedIconShape
 import com.nathanhanapps.nebulaThemePorter.core.IconPlanner
 import com.nathanhanapps.nebulaThemePorter.core.StockComponentIndex
 import com.nathanhanapps.nebulaThemePorter.core.ThemeMetadata
+import com.nathanhanapps.nebulaThemePorter.core.TintBlendMode
 import com.nathanhanapps.nebulaThemePorter.source.IconPackSource
 import com.nathanhanapps.nebulaThemePorter.source.InstalledApps
 import com.nathanhanapps.nebulaThemePorter.source.MtzSource
 import java.io.File
 import kotlinx.coroutines.launch
+
+private const val NL = "\n"
 
 /**
  * Builds a theme without the UI. Push the input into the app's external files directory, then:
@@ -24,24 +29,38 @@ import kotlinx.coroutines.launch
  *   --es source theme.mtz --es output out.zmtp --ez onlyInstalled true
  *
  * Progress and the result go to <output>.status.txt next to the output (logcat is unreliable on NebulaAIOS).
- * The status file's first line is RUNNING, DONE or FAILED.
+ * The status file's first line is RUNNING, DONE or FAILED. The same text is mirrored on screen - a headless
+ * build of a large pack takes tens of seconds, and without it the phone just shows a blank activity with no
+ * indication of whether anything is happening. The activity stays up on the result rather than finishing, so
+ * the outcome is still readable afterwards; start it again to run another build (force-stop first).
  */
 class DebugBuildActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val screen = TextView(this).apply {
+            textSize = 13f
+            setPadding(40, 80, 40, 40)
+            keepScreenOn = true
+            typeface = android.graphics.Typeface.MONOSPACE
+        }
+        setContentView(ScrollView(this).apply { addView(screen) })
         val dir = getExternalFilesDir(null) ?: filesDir
         val sourceName = intent.getStringExtra("source")
         val output = intent.getStringExtra("output") ?: "${sourceName?.substringBeforeLast('.')}.zmtp"
         val status = File(dir, "$output.status.txt")
         if (sourceName == null) {
-            status.writeText("FAILED\nmissing --es source\n")
-            finish()
+            report(screen, status, "FAILED" + NL + "missing --es source")
             return
         }
         val onlyInstalled = intent.getBooleanExtra("onlyInstalled", true)
         val shape = intent.getStringExtra("shape")?.let { runCatching { FixedIconShape.valueOf(it) }.getOrNull() } ?: FixedIconShape.NONE
         val composition = intent.getStringExtra("composition")?.let { runCatching { FixedIconComposition.valueOf(it) }.getOrNull() } ?: FixedIconComposition.OVERLAY
-        status.writeText("RUNNING\n")
+        val padColor = intent.getStringExtra("padColor")?.let { runCatching { android.graphics.Color.parseColor(it).toLong() and 0xFFFFFFFFL }.getOrNull() }
+        val tintColor = intent.getStringExtra("tintColor")?.let { runCatching { android.graphics.Color.parseColor(it).toLong() and 0xFFFFFFFFL }.getOrNull() }
+        val blendMode = intent.getStringExtra("blendMode")?.let { runCatching { TintBlendMode.valueOf(it) }.getOrNull() } ?: TintBlendMode.MULTIPLY
+        val iconScale = intent.getFloatExtra("iconScale", 0.66f)
+        val backgroundScale = intent.getFloatExtra("backgroundScale", 1f)
+        report(screen, status, "RUNNING")
 
         lifecycleScope.launch {
             val started = SystemClock.elapsedRealtime()
@@ -52,11 +71,18 @@ class DebugBuildActivity : ComponentActivity() {
                 source.use { src ->
                     val stock = StockComponentIndex.parse(assets.open("stock_components.txt").bufferedReader().use { it.readText() })
                     val planner = IconPlanner(stock, InstalledApps.launcherActivities(this@DebugBuildActivity))
-                    val options = BuildOptions(onlyInstalledApps = onlyInstalled, fixedShape = shape, fixedComposition = composition)
+                    val options = BuildOptions(
+                        onlyInstalledApps = onlyInstalled, fixedShape = shape, fixedComposition = composition,
+                        padBackground = padColor ?: 0xFFFFFFFFL, fixedTintColor = tintColor,
+                        fixedTintBlendMode = blendMode,
+                        fixedIconScale = iconScale, fixedBackgroundScale = backgroundScale,
+                    )
                     val assignments = planner.autoAssignSystemApps(src.icons)
                     val plan = planner.plan(src.icons, assignments, onlyInstalled)
                     notes.append("plan sources=${src.icons.size} images=${plan.icons.map { it.sourceId }.toSet().size} names=${plan.icons.size}\n")
                     notes.append("system=${assignments.keys.sorted()}\n")
+                    notes.append("comp=$composition icon=$iconScale bg=$backgroundScale\n")
+                    notes.append("shape=$shape tint=$tintColor blend=$blendMode\n")
                     val metadata = ThemeMetadata(
                         id = output.removeSuffix(".zmtp"),
                         labelEn = src.suggestedLabel,
@@ -75,15 +101,25 @@ class DebugBuildActivity : ComponentActivity() {
                         null,
                         { File(dir, output).outputStream() },
                     ) { progress ->
-                        status.writeText("RUNNING\n${progress.done}/${progress.total} ${progress.label}\n$notes")
+                        val elapsed = (SystemClock.elapsedRealtime() - started) / 1000.0
+                        report(
+                            screen, status,
+                            "RUNNING" + NL + "%.1fs  ${progress.done}/${progress.total}  ${progress.label}".format(elapsed) + NL + notes,
+                        )
                     }
                 }
             }.onSuccess { summary ->
-                status.writeText("DONE\n$summary\n${SystemClock.elapsedRealtime() - started} ms\n$notes")
+                report(screen, status, "DONE" + NL + summary + NL + "${SystemClock.elapsedRealtime() - started} ms" + NL + notes)
             }.onFailure { error ->
-                status.writeText("FAILED\n$notes${error.stackTraceToString()}")
+                report(screen, status, "FAILED" + NL + notes + error.stackTraceToString())
             }
-            finish()
         }
     }
+
+    /** One place to write the status file and put the same text on screen, so they can never disagree. */
+    private fun report(screen: TextView, status: File, text: String) {
+        status.writeText(text)
+        runOnUiThread { screen.text = text }
+    }
+
 }

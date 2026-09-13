@@ -15,6 +15,7 @@ import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.Drawable
 import androidx.core.graphics.PathParser
 import com.nathanhanapps.nebulaThemePorter.core.IconMaskShape
+import com.nathanhanapps.nebulaThemePorter.core.TintBlendMode
 import java.io.ByteArrayOutputStream
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -64,8 +65,8 @@ object Bitmaps {
         return out
     }
 
-    /** Preserves source alpha and recolors its grayscale information by multiplying it with [color]. */
-    fun tint(source: Bitmap, color: Int, strength: Float): Bitmap {
+    /** Preserves source alpha and recolors its grayscale information by combining it with [color] via [mode]. */
+    fun tint(source: Bitmap, color: Int, strength: Float, mode: TintBlendMode = TintBlendMode.MULTIPLY): Bitmap {
         val ratio = strength.coerceIn(0f, 1f)
         val out = source.copy(Bitmap.Config.ARGB_8888, true)
         val pixels = IntArray(out.width * out.height)
@@ -73,6 +74,15 @@ object Bitmaps {
         val tintRed = Color.red(color)
         val tintGreen = Color.green(color)
         val tintBlue = Color.blue(color)
+        // [TintBlendMode.blend] is a pure function of a 0..255 grayscale and one 0..255 tint channel, so a whole
+        // bitmap can only ever produce 3 * 256 distinct results. Calling it per pixel re-ran its float pipeline -
+        // two divides, a branch, a round and a clamp, plus a sqrt for Soft Light - three times for every pixel,
+        // which is what made every mode (Multiply included, since it lost its integer-only fast path when the
+        // modes were added) several times slower than before. Tabulating it up front turns the inner loop back
+        // into three array reads and leaves the output bit-for-bit identical.
+        val redLut = IntArray(256) { mode.blend(it, tintRed) }
+        val greenLut = IntArray(256) { mode.blend(it, tintGreen) }
+        val blueLut = IntArray(256) { mode.blend(it, tintBlue) }
         pixels.indices.forEach { index ->
             val pixel = pixels[index]
             val alpha = pixel ushr 24
@@ -80,16 +90,12 @@ object Bitmaps {
             val red = Color.red(pixel)
             val green = Color.green(pixel)
             val blue = Color.blue(pixel)
-            val grayscale = (red * 0.2126f + green * 0.7152f + blue * 0.0722f).toInt()
-            // Multiplication keeps the source's grey detail; white becomes the selected tint and black stays black.
-            val tintedRed = grayscale * tintRed / 255
-            val tintedGreen = grayscale * tintGreen / 255
-            val tintedBlue = grayscale * tintBlue / 255
+            val grayscale = (red * 0.2126f + green * 0.7152f + blue * 0.0722f).roundToInt().coerceIn(0, 255)
             pixels[index] = Color.argb(
                 alpha,
-                (red + (tintedRed - red) * ratio).toInt().coerceIn(0, 255),
-                (green + (tintedGreen - green) * ratio).toInt().coerceIn(0, 255),
-                (blue + (tintedBlue - blue) * ratio).toInt().coerceIn(0, 255),
+                (red + (redLut[grayscale] - red) * ratio).toInt().coerceIn(0, 255),
+                (green + (greenLut[grayscale] - green) * ratio).toInt().coerceIn(0, 255),
+                (blue + (blueLut[grayscale] - blue) * ratio).toInt().coerceIn(0, 255),
             )
         }
         out.setPixels(pixels, 0, out.width, 0, 0, out.width, out.height)

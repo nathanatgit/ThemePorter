@@ -92,6 +92,16 @@ class ThemeBuilder(private val context: Context) {
                 ?.takeIf { Bitmaps.alphaBounds(it, threshold = 8) != null }
         }
         val iconBack = customFixedBack ?: sourceIconBack
+        // One plate for the whole pack. [FixedIconArt.render] otherwise rebuilds this identical
+        // cover/tint/flatten/clip bitmap once per icon, which is the largest redundant cost in a build - and got
+        // markedly more expensive once the tint gained selectable blend modes. fallbackFixedShape is
+        // fixedVisualShape and a non-original options.fixedShape is too, so this one plate serves both branches
+        // of renderIcon's shape choice; an original options.fixedShape makes render() return before it is read.
+        val plateSize = (NebulaSpec.FIXED_ICON_SIZE * options.fixedBackgroundScale.coerceIn(0.35f, 1.25f))
+            .toInt().coerceAtLeast(1)
+        val iconPlate = FixedIconArt.buildPlate(
+            fixedVisualShape, plateSize, options.padBackground.toInt(), iconBack, options.fixedTintBlendMode,
+        )
         val showcase = LinkedHashMap<String, Bitmap>()
         var fileCount: Int
 
@@ -119,14 +129,22 @@ class ThemeBuilder(private val context: Context) {
                 val clipSource = !options.fixedShape.isOriginal
                 val dynamicTintColor = options.fixedTintColor?.toInt()
                 if (extras.calendar != null || options.generateMissingDynamicIcons) {
-                    val art = DynamicIcons.loadCalendar(source, extras.calendar, dynamicTintColor, options.fixedTintStrength)
-                    zip.putPng(ShapeAsset.DYNAMIC_CALENDAR.fileName(), Bitmaps.png(DynamicIcons.calendarStrip(art, fixedVisualShape, clipSource)))
+                    val art = DynamicIcons.loadCalendar(source, extras.calendar, dynamicTintColor, options.fixedTintStrength, options.fixedTintBlendMode)
+                    val calendarStrip = DynamicIcons.calendarStrip(
+                        art, fixedVisualShape, clipSource, options.padBackground.toInt(), iconBack, options.fixedTintBlendMode,
+                        options.fixedComposition, options.fixedIconScale, options.fixedIconAlpha, options.fixedBackgroundScale,
+                    )
+                    zip.putPng(ShapeAsset.DYNAMIC_CALENDAR.fileName(), Bitmaps.png(calendarStrip))
                     zip.putText(NebulaSpec.CALENDAR_INFO, ThemeXml.calendarInfo(DynamicIcons.calendarTextStyle(art)))
                 }
                 step(context.getString(R.string.progress_calendar))
                 if (extras.clock != null || options.generateMissingDynamicIcons) {
-                    val art = DynamicIcons.loadClock(source, extras.clock, dynamicTintColor, options.fixedTintStrength)
-                    zip.putPng(ShapeAsset.DYNAMIC_CLOCK.fileName(), Bitmaps.png(DynamicIcons.clockStrip(art, fixedVisualShape, clipSource, dynamicTintColor)))
+                    val art = DynamicIcons.loadClock(source, extras.clock, dynamicTintColor, options.fixedTintStrength, options.fixedTintBlendMode)
+                    val clockStrip = DynamicIcons.clockStrip(
+                        art, fixedVisualShape, clipSource, dynamicTintColor, options.padBackground.toInt(), iconBack, options.fixedTintBlendMode,
+                        options.fixedComposition, options.fixedIconScale, options.fixedIconAlpha, options.fixedBackgroundScale,
+                    )
+                    zip.putPng(ShapeAsset.DYNAMIC_CLOCK.fileName(), Bitmaps.png(clockStrip))
                 }
                 step(context.getString(R.string.progress_clock))
 
@@ -136,7 +154,9 @@ class ThemeBuilder(private val context: Context) {
                         chunk.map { (sourceId, planned) ->
                             val curve = iconCurves[sourceId] ?: GrayscaleCurve()
                             val curveLut = if (curve.isIdentity) null else curve.lut()
-                            async { renderIcon(source, sourceId, planned.map { it.stem }, options, iconBack, fallbackFixedShape, curveLut) }
+                            async {
+                                renderIcon(source, sourceId, planned.map { it.stem }, options, iconBack, fallbackFixedShape, curveLut, iconPlate)
+                            }
                         }.awaitAll()
                     }
                     rendered.forEach { icon ->
@@ -148,6 +168,7 @@ class ThemeBuilder(private val context: Context) {
                     done += chunk.size
                     onProgress(BuildProgress(done, total, context.getString(R.string.progress_icons, done - 3, iconsBySource.size)))
                 }
+                iconPlate.recycle()
 
                 // The launcher only composites an unthemed app icon on theme_bg_icon when overlapBg is set.
                 // Write it for every selected fixed outline, including packs without an iconback resource.
@@ -229,6 +250,8 @@ class ThemeBuilder(private val context: Context) {
         iconBack: Bitmap?,
         fallbackFixedShape: FixedIconShape,
         curveLut: IntArray?,
+        /** Shared across every icon in the build; owned by the caller, never recycled here. */
+        plate: Bitmap,
     ): RenderedIcon? {
         val bitmap = decodeSource(source, sourceId, options.generatedIconOwnBackground) ?: return null
         val files = ArrayList<Pair<String, ByteArray>>()
@@ -241,9 +264,11 @@ class ThemeBuilder(private val context: Context) {
             tintColor = options.fixedTintColor?.toInt(),
             tintStrength = options.fixedTintStrength,
             curveLut = curveLut,
+            tintBlendMode = options.fixedTintBlendMode,
             backgroundScale = options.fixedBackgroundScale,
             padColor = options.padBackground.toInt(),
             iconBack = iconBack,
+            plate = plate,
         )
         val bytes = Bitmaps.png(flat)
         stems.forEach { files += "$it.png" to bytes }
@@ -267,7 +292,7 @@ class ThemeBuilder(private val context: Context) {
             val plateSize = (size * options.fixedBackgroundScale.coerceIn(0.35f, 1.25f)).toInt().coerceAtLeast(1)
             val content = iconBack?.let {
                 val covered = Bitmaps.cover(it, plateSize, plateSize)
-                Bitmaps.tint(covered, options.padBackground.toInt(), 1f).also { covered.recycle() }
+                Bitmaps.tint(covered, options.padBackground.toInt(), 1f, options.fixedTintBlendMode).also { covered.recycle() }
             } ?: Bitmaps.solid(plateSize, options.padBackground.toInt())
             val shaped = Shapes.clip(content, fixedVisualShape, plateSize)
             content.recycle()

@@ -29,6 +29,7 @@ import com.nathanhanapps.nebulaThemePorter.core.CurvePoint
 import com.nathanhanapps.nebulaThemePorter.core.GrayscaleCurve
 import com.nathanhanapps.nebulaThemePorter.core.NebulaSpec
 import com.nathanhanapps.nebulaThemePorter.core.SourceIcon
+import com.nathanhanapps.nebulaThemePorter.core.TintBlendMode
 import com.nathanhanapps.nebulaThemePorter.core.StockComponentIndex
 import com.nathanhanapps.nebulaThemePorter.core.ThemeMetadata
 import com.nathanhanapps.nebulaThemePorter.core.ZteSystemApp
@@ -59,6 +60,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 enum class Stage { HOME, LOADING, CONFIGURE, BUILDING, DONE, ERROR }
@@ -107,7 +110,6 @@ data class PorterState(
     val selectedWallpaperId: String? = null,
     val wallpaperName: String? = null,
     val fixedBackgroundName: String? = null,
-    val fixedPreviewIconId: String? = null,
     val wallpaperPreview: Bitmap? = null,
     val wallpaperPalette: List<Long> = emptyList(),
     val wallpaperRevision: Int = 0,
@@ -233,6 +235,7 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
     fun setFixedIconAlpha(alpha: Float) = updateOptions { it.copy(fixedIconAlpha = alpha.coerceIn(0f, 1f)) }
     fun setFixedTintColor(color: Long?) = updateOptions { it.copy(fixedTintColor = color) }
     fun setFixedTintStrength(strength: Float) = updateOptions { it.copy(fixedTintStrength = strength.coerceIn(0f, 1f)) }
+    fun setFixedTintBlendMode(mode: TintBlendMode) = updateOptions { it.copy(fixedTintBlendMode = mode) }
     fun setFixedTintHue(value: Float) = updateFixedTintHsv { it[0] = value.coerceIn(0f, 360f) }
     fun setFixedTintSaturation(value: Float) = updateFixedTintHsv { it[1] = value.coerceIn(0f, 1f) }
     fun setFixedTintBrightness(value: Float) = updateFixedTintHsv { it[2] = value.coerceIn(0f, 1f) }
@@ -557,6 +560,35 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
         return decoded
     }
 
+    private var thumbnailPlateKey: String? = null
+    private var thumbnailPlate: Bitmap? = null
+    private val thumbnailPlateLock = Mutex()
+
+    /**
+     * The same background plate [FixedIconArt.render] would otherwise build internally, cached across every
+     * visible grid cell that shares shape/backgroundScale/padColor/iconBack/tintBlendMode - only the foreground
+     * icon differs between them, so rebuilding this identical cover/tint/flatten/clip plate once per cell was
+     * most of the per-thumbnail render cost and the main cause of the app-list grid feeling laggy. A stale plate
+     * is left for the garbage collector rather than explicitly recycled on a cache miss, since it could still be
+     * mid-draw on another thumbnail's in-flight render call when the key changes underneath it.
+     */
+    private suspend fun thumbnailPlate(shape: FixedIconShape, backgroundSize: Int, padColor: Int, iconBack: Bitmap?, tintBlendMode: TintBlendMode): Bitmap {
+        val key = "$shape:$backgroundSize:$padColor:$tintBlendMode:${iconBack?.let { System.identityHashCode(it) } ?: 0}"
+        thumbnailPlate?.takeIf { key == thumbnailPlateKey }?.let { return it }
+        return thumbnailPlateLock.withLock {
+            // Re-check under the lock. The preview tiles and every visible grid cell launch together and all
+            // miss the fast path above at once, so without single-flighting the miss each of them builds its own
+            // copy of the identical plate - precisely the work this cache exists to avoid.
+            thumbnailPlate?.takeIf { key == thumbnailPlateKey }
+                ?: withContext(Dispatchers.Default) {
+                    FixedIconArt.buildPlate(shape, backgroundSize, padColor, iconBack, tintBlendMode)
+                }.also {
+                    thumbnailPlateKey = key
+                    thumbnailPlate = it
+                }
+        }
+    }
+
     /**
      * [tintColor]/[tintStrength] and [curve], when given, preview the same adjustments [FixedIconArt.render]
      * bakes into the real build output - they apply regardless of the chosen fixed shape, so list thumbnails
@@ -579,13 +611,14 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
         curve: GrayscaleCurve = GrayscaleCurve(),
         fixedOptions: BuildOptions? = null,
         ownBackground: Boolean = true,
+        tintBlendMode: TintBlendMode = TintBlendMode.MULTIPLY,
     ): Bitmap? {
         val shaped = fixedOptions?.takeUnless { it.fixedShape.isOriginal }
         val isDeviceIcon = DeviceIconId.isDeviceIcon(imageId)
         val baseKey = if (isDeviceIcon) "$imageId|bg:$ownBackground" else imageId
         val cacheKey = buildString {
             append(baseKey)
-            if (tintColor != null) append("|tint:$tintColor:$tintStrength")
+            if (tintColor != null) append("|tint:$tintColor:$tintStrength:$tintBlendMode")
             if (!curve.isIdentity) append("|c:${curve.points}")
             if (shaped != null) {
                 append("|shape:${shaped.fixedShape}:${shaped.fixedComposition}:${shaped.fixedIconScale}:")
@@ -603,6 +636,9 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
         val curveLut = if (curve.isIdentity) null else curve.lut()
         val prepared = if (shaped != null) {
             val iconBack = thumbnailIconBack()
+            val backgroundSize = (NebulaSpec.PREVIEW_ICON_SIZE * shaped.fixedBackgroundScale.coerceIn(0.35f, 1.25f)).toInt().coerceAtLeast(1)
+            val plate = shaped.fixedShape.takeUnless { it.isOriginal }
+                ?.let { thumbnailPlate(it, backgroundSize, shaped.padBackground.toInt(), iconBack, tintBlendMode) }
             withContext(Dispatchers.Default) {
                 FixedIconArt.render(
                     source = base,
@@ -616,25 +652,21 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
                     padColor = shaped.padBackground.toInt(),
                     iconBack = iconBack,
                     curveLut = curveLut,
+                    tintBlendMode = tintBlendMode,
+                    size = NebulaSpec.PREVIEW_ICON_SIZE,
+                    plate = plate,
                 )
             }
         } else {
             withContext(Dispatchers.Default) {
                 val curved = curveLut?.let { Bitmaps.curve(base, it) } ?: base
                 tintColor?.let { color ->
-                    Bitmaps.tint(curved, color, tintStrength).also { if (curved !== base) curved.recycle() }
+                    Bitmaps.tint(curved, color, tintStrength, tintBlendMode).also { if (curved !== base) curved.recycle() }
                 } ?: curved
             }
         }
         synchronized(thumbnails) { thumbnails.put(cacheKey, prepared) }
         return prepared
-    }
-
-    fun fixedPreviewIconId(): String? = mutableState.value.fixedPreviewIconId ?: fixedPreviewIconChoices().firstOrNull()
-
-    fun setFixedPreviewIcon(imageId: String?) {
-        if (imageId != null && source?.icons?.none { it.id == imageId } != false) return
-        mutableState.update { it.copy(fixedPreviewIconId = imageId) }
     }
 
     /** Five recognisable app types first, then ordinary imported icons as a fallback. */
@@ -653,37 +685,19 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
         return picked.take(5).toList()
     }
 
-    /** A disposable sample for the fixed-icon controls; callers own and recycle the returned bitmap. */
-    suspend fun fixedIconPreview(imageId: String, options: BuildOptions): Bitmap? {
-        val active = source ?: return null
-        // Decoding and pixel work must never run in the Compose/UI coroutine while a slider is moving.
-        return withContext(Dispatchers.IO) {
-            val icon = runCatching { active.decode(imageId, 256) }.getOrNull() ?: return@withContext null
-            val iconBack = fixedBackgroundFile?.let { file ->
-                runCatching { com.nathanhanapps.nebulaThemePorter.render.Bitmaps.decode(file.readBytes(), NebulaSpec.FIXED_ICON_SIZE) }.getOrNull()
-            } ?: active.extras.iconBack?.let { id ->
-                runCatching { active.decode(id, NebulaSpec.FIXED_ICON_SIZE) }.getOrNull()
-            }
-            try {
-                withContext(Dispatchers.Default) {
-                    FixedIconArt.render(
-                        source = icon,
-                        shape = options.fixedShape,
-                        composition = options.fixedComposition,
-                        iconScale = options.fixedIconScale,
-                        iconAlpha = options.fixedIconAlpha,
-                        tintColor = options.fixedTintColor?.toInt(),
-                        tintStrength = options.fixedTintStrength,
-                        backgroundScale = options.fixedBackgroundScale,
-                        padColor = options.padBackground.toInt(),
-                        iconBack = iconBack,
-                    )
-                }
-            } finally {
-                icon.recycle()
-                iconBack?.recycle()
-            }
-        }
+    /**
+     * Both dynamic previews build an entire 32-frame calendar strip (or 3-frame clock strip) just to show one
+     * ~58dp tile - deliberately, since reusing [DynamicIcons]' own strip code is what keeps the preview from
+     * drifting from the build. Caching the finished tile keeps that guarantee while making a repeat of the same
+     * settings - a recomposition, a slider dragged back where it was, a shape toggled and toggled back - free
+     * instead of another 31 decodes and tints. The keys sit in [thumbnails] behind a "@" prefix that no image id
+     * can produce, so they share its eviction budget instead of holding bitmaps alive on their own.
+     */
+    private fun dynamicPreviewKey(kind: String, options: BuildOptions, iconBack: Bitmap?): String = buildString {
+        append("@$kind|shape:${options.fixedShape}|tint:${options.fixedTintColor}:${options.fixedTintStrength}")
+        append(":${options.fixedTintBlendMode}|pad:${options.padBackground}|gen:${options.generateMissingDynamicIcons}")
+        append("|comp:${options.fixedComposition}:${options.fixedIconScale}:${options.fixedIconAlpha}")
+        append(":${options.fixedBackgroundScale}|back:${iconBack?.let { System.identityHashCode(it) } ?: 0}")
     }
 
     /**
@@ -696,13 +710,19 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
     suspend fun calendarIconPreview(options: BuildOptions): Bitmap? {
         val active = source ?: return null
         if (active.extras.calendar == null && !options.generateMissingDynamicIcons) return null
+        val iconBack = thumbnailIconBack()
+        val today = (java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_MONTH) - 1).coerceIn(0, 31)
+        val cacheKey = dynamicPreviewKey("calendar:$today", options, iconBack)
+        synchronized(thumbnails) { thumbnails.get(cacheKey) }?.let { return it }
         return withContext(Dispatchers.Default) {
-            val art = DynamicIcons.loadCalendar(active, active.extras.calendar, options.fixedTintColor?.toInt(), options.fixedTintStrength)
-            val strip = DynamicIcons.calendarStrip(art, options.fixedShape, !options.fixedShape.isOriginal)
+            val art = DynamicIcons.loadCalendar(active, active.extras.calendar, options.fixedTintColor?.toInt(), options.fixedTintStrength, options.fixedTintBlendMode)
+            val strip = DynamicIcons.calendarStrip(
+                art, options.fixedShape, !options.fixedShape.isOriginal, options.padBackground.toInt(), iconBack, options.fixedTintBlendMode,
+                options.fixedComposition, options.fixedIconScale, options.fixedIconAlpha, options.fixedBackgroundScale,
+            )
             val size = NebulaSpec.ASSET_SIZE
-            val today = (java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_MONTH) - 1).coerceIn(0, 31)
             Bitmap.createBitmap(strip, today * size, 0, size, size).also { strip.recycle() }
-        }
+        }.also { synchronized(thumbnails) { thumbnails.put(cacheKey, it) } }
     }
 
     /**
@@ -714,9 +734,16 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
     suspend fun clockIconPreview(options: BuildOptions): Bitmap? {
         val active = source ?: return null
         if (active.extras.clock == null && !options.generateMissingDynamicIcons) return null
+        val iconBack = thumbnailIconBack()
+        val cacheKey = dynamicPreviewKey("clock", options, iconBack)
+        synchronized(thumbnails) { thumbnails.get(cacheKey) }?.let { return it }
         return withContext(Dispatchers.Default) {
-            val art = DynamicIcons.loadClock(active, active.extras.clock, options.fixedTintColor?.toInt(), options.fixedTintStrength)
-            val strip = DynamicIcons.clockStrip(art, options.fixedShape, !options.fixedShape.isOriginal, options.fixedTintColor?.toInt())
+            val art = DynamicIcons.loadClock(active, active.extras.clock, options.fixedTintColor?.toInt(), options.fixedTintStrength, options.fixedTintBlendMode)
+            val strip = DynamicIcons.clockStrip(
+                art, options.fixedShape, !options.fixedShape.isOriginal, options.fixedTintColor?.toInt(),
+                options.padBackground.toInt(), iconBack, options.fixedTintBlendMode,
+                options.fixedComposition, options.fixedIconScale, options.fixedIconAlpha, options.fixedBackgroundScale,
+            )
             val size = NebulaSpec.ASSET_SIZE
             val out = Bitmaps.square(size)
             val canvas = Canvas(out)
@@ -727,7 +754,7 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
             canvas.drawBitmap(strip, frame(1), dst, null) // minute hand
             strip.recycle()
             out
-        }
+        }.also { synchronized(thumbnails) { thumbnails.put(cacheKey, it) } }
     }
 
     override fun onCleared() {
@@ -879,8 +906,17 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun updateOptions(transform: (BuildOptions) -> BuildOptions) {
+        val before = mutableState.value.options
         mutableState.update { it.copy(options = transform(it.options)) }
-        replan()
+        val after = mutableState.value.options
+        // [planFor] reads exactly these two options and nothing else, so replanning unconditionally meant every
+        // tick of a tint/scale slider kicked off a full plan that could only produce the same answer - while
+        // competing with the preview renders for Dispatchers.Default the whole time it did.
+        if (before.onlyInstalledApps != after.onlyInstalledApps ||
+            before.generateMissingAppIcons != after.generateMissingAppIcons
+        ) {
+            replan()
+        }
     }
 
     private fun updateFixedTintHsv(change: (FloatArray) -> Unit) = updateOptions { options ->

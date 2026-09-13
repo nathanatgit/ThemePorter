@@ -47,6 +47,11 @@ object NebulaSpec {
     /** Flat app icons in fixed-shape themes. Stock uses 156; working ported themes ship 168 to 250. */
     const val FIXED_ICON_SIZE = 192
 
+    /** Fixed-shape composition rendered for an in-app grid thumbnail, not the exported PNG. Doing the same
+     * shape/plate/clip work at [FIXED_ICON_SIZE] for a ~50dp list cell burns ~4x the pixels a screen can ever
+     * show, which is most of why list scrolling used to lag. */
+    const val PREVIEW_ICON_SIZE = 96
+
     /** Days 1..31, then the background tile. */
     const val CALENDAR_FRAMES = 32
 

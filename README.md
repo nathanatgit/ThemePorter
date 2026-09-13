@@ -31,14 +31,28 @@ The result is a `.zmtp` file you apply from the phone's built-in **Themes** app,
   - **Overlay** — a tinted plate sits behind the icon, so the imported artwork stays fully visible on top.
   - **Cover** — the icon is cropped to completely fill the shape.
   - **Crop to background** — the icon keeps its imported size but is clipped to the shape's outline.
-- **Icon size, transparency and background size** sliders fine-tune how the icon sits on its plate; a live preview (five common apps, or pick any imported icon) updates as you adjust them.
-- **Background tint and icon tint** — pick a color from the current wallpaper's palette, a neutral, or a custom color. Icon tint recolors the imported glyph from its own grayscale shading while keeping its transparent outline, with independent hue/saturation/brightness and strength controls.
+- **Live preview** — five common imported icons plus the calendar and clock, each rendered through the exact pipeline the build uses, so a shape, composition or tint change shows its effect across several different icons at once.
+- **Icon size, transparency and background size** sliders fine-tune how the icon sits on its plate, under the collapsible **Icon & background size** heading.
+- **Background tint and icon tint** — pick a color from the current wallpaper's palette, a neutral, or a custom color. Icon tint recolors the imported glyph from its own grayscale shading while keeping its transparent outline, with independent hue/saturation/brightness and strength controls, plus a **blend mode** that decides how that shading meets the color:
+  - **Multiply** — the classic: white becomes the tint color, black stays black.
+  - **Overlay** — punchier: darkens below mid-grey, lightens above it.
+  - **Soft Light** — the same idea without Overlay's hard midpoint, for a subtler recolor.
+  - **Lighten** — keeps whichever of the shading or the tint is brighter, which rescues artwork too dark to read once tinted.
 - **Custom background image** — instead of a flat color, use your own square PNG (512×512 px or larger, subject centered with a little edge bleed) as the shape's plate.
 - **Wallpaper** — use the source's own wallpaper if it has one, or the built-in gradient studio (three colors, Linear/Radial/Soft-blob mixing, blur, and one-tap recoloring/reshuffling).
-- **Calendar & clock preview** — calendar and clock always pick up the same tint as every other icon; a small preview of both sits next to the tint controls so a tint that doesn't suit them can be caught and adjusted before building, not after.
+- **Calendar & clock** — both automatically pick up the same shape, composition, icon/background size and tint as every other icon, and both sit in the live preview, so a treatment that doesn't suit them can be caught before building rather than after.
 - **Options** — limit the theme to apps actually installed on your phone, generate a plain calendar/clock when the source has none, and generate a temporary icon (from the app's own launcher icon) for installed apps missing from the source, optionally keeping that app's own icon background instead of the theme's unified color.
 - **Manual replacement** — override the suggested icon for any supported system app, or any other installed, launcher-visible app, from a grid of the source's own icons, shown with the exact shape and tint they'll export with.
 - **Batch tone curve** — long-press any icon in that grid to start selecting more, then drag a curve over a live histogram of the selected icons to even out how light or dark they look once tinted (tap empty space to add a point, drag a point to move it, long-press a point to remove it). A **Normalize** button shifts each selected icon by its own amount so they land on the same average brightness in one step, instead of hand-tuning each one.
+
+### Making a mixed pack look like one set
+
+Icon packs are rarely internally consistent — some glyphs come in bright, some almost black, and a single tint color lands differently on each. Two controls fix that together:
+
+- **Blend mode** sets the character of the recolor across the whole theme. Multiply is the safe default; Soft Light keeps more of the source's own shading; Lighten rescues packs whose artwork is too dark to read once tinted.
+- **The tone curve** corrects the icons that still don't match. Select them in the manual-replacement grid, then drag the curve over their combined histogram, or tap **Normalize** to pull them all to the same average brightness in one step.
+
+Blend mode is the global look; the curve is the per-icon correction that makes everything land on it.
 
 ## Building and applying
 
