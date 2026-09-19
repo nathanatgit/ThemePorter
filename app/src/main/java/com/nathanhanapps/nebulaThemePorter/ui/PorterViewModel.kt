@@ -173,6 +173,9 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
         /** Keys for [PorterState.iconCurves] and [PorterState.selectedGridKeys] - shared with the grid item keys in PorterScreens.kt. */
         fun systemContrastKey(appId: String) = "system:$appId"
         fun userContrastKey(stem: String) = "user:$stem"
+
+        /** A recolor addresses an app by package, since that is how a MIUI theme names its drawables. */
+        fun recolorContrastKey(packageName: String) = "recolor:$packageName"
     }
 
     private val app get() = getApplication<Application>()
@@ -446,6 +449,10 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
      * silently dropping the curve for any app that only ever showed its own launcher icon. */
     private fun resolveSourceId(state: PorterState, key: String): String? = when {
         key.startsWith("system:") -> state.assignments[key.removePrefix("system:")]
+        key.startsWith("recolor:") -> {
+            val packageName = key.removePrefix("recolor:")
+            state.recolorApps.firstOrNull { it.packageName == packageName }?.imageId
+        }
         key.startsWith("user:") -> {
             val stem = key.removePrefix("user:")
             state.userAssignments[stem] ?: state.userSuggestions[stem] ?: run {
@@ -666,6 +673,7 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
     ) {
         val activeSource = source as? MtzSource ?: return
         val options = mutableState.value.options
+        val curves = sourceIdCurveMap(mutableState.value)
         buildJob?.cancel()
         mutableState.update {
             it.copy(stage = Stage.BUILDING, progress = BuildProgress(0, 1, app.getString(R.string.progress_planning)), error = null, outputPath = null)
@@ -678,6 +686,7 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
                     options,
                     installedLaunchers.keys,
                     openOutput,
+                    iconCurves = curves,
                 ) { progress ->
                     mutableState.update { it.copy(progress = progress) }
                 }
@@ -763,15 +772,19 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
      * [MtzRecolorBuilder] would compose it, so the grid shows the icon that is actually written rather than a
      * plain tinted glyph.
      */
-    suspend fun recolorThumbnail(entry: RecolorApp, options: BuildOptions): Bitmap? {
+    suspend fun recolorThumbnail(entry: RecolorApp, options: BuildOptions, curve: GrayscaleCurve = GrayscaleCurve()): Bitmap? {
         val tint = options.fixedTintColor?.toInt()
         if (!entry.generated || !options.fixedShape.isOriginal) {
             return thumbnail(
-                entry.imageId, tint, options.fixedTintStrength, GrayscaleCurve(),
+                entry.imageId, tint, options.fixedTintStrength, curve,
                 options.takeUnless { it.fixedShape.isOriginal }, options.generatedIconOwnBackground, options.fixedTintBlendMode,
             )
         }
-        val cacheKey = "miui:${entry.imageId}|bg:${options.generatedIconOwnBackground}|tint:$tint:${options.fixedTintStrength}:${options.fixedTintBlendMode}"
+        val cacheKey = buildString {
+            append("miui:${entry.imageId}|bg:${options.generatedIconOwnBackground}")
+            append("|tint:$tint:${options.fixedTintStrength}:${options.fixedTintBlendMode}")
+            if (!curve.isIdentity) append("|c:${curve.points}")
+        }
         synchronized(thumbnails) { thumbnails.get(cacheKey) }?.let { return it }
         val glyph = withContext(Dispatchers.IO) {
             runCatching {
@@ -788,6 +801,7 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
             MiuiIconArt.render(
                 glyph, NebulaSpec.PREVIEW_ICON_SIZE, mask, tintedPlate ?: plate, tintedBorder ?: border, scale,
                 tint, options.fixedTintStrength, options.fixedTintBlendMode,
+                curveLut = if (curve.isIdentity) null else curve.lut(),
             ).also {
                 tintedPlate?.recycle()
                 tintedBorder?.recycle()

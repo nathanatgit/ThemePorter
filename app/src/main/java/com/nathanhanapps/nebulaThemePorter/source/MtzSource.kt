@@ -55,6 +55,12 @@ class MtzSource private constructor(
     companion object {
         private const val OUTER = "o:"
         private const val INNER = "i:"
+
+        /**
+         * The id [readBytes] takes for one entry of the icons archive - the same id the UI knows that icon by,
+         * so a recolor can look up what the user decided about an entry while walking the archive.
+         */
+        internal fun imageId(entry: String): String = INNER + entry
         private val iconPreview = Regex("^preview/preview_icons_\\d+\\.(jpg|jpeg|png|webp)$")
 
         suspend fun open(context: Context, uri: Uri): MtzSource = withContext(Dispatchers.IO) {

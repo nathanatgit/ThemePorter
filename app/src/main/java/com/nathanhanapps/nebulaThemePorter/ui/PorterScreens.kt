@@ -979,24 +979,6 @@ private fun ConfigureScreen(
                 }
             }
             item {
-                SectionHeader(
-                    stringResource(R.string.recolor_apps),
-                    if (state.recolorAppsLoading || !state.recolorAppsLoaded) {
-                        stringResource(R.string.recolor_apps_loading)
-                    } else {
-                        stringResource(R.string.recolor_apps_detail, state.recolorApps.size, state.recolorMissing)
-                    },
-                )
-            }
-            items(
-                state.recolorApps.chunked(AppGridColumns),
-                key = { row -> row.joinToString(",") { "recolor:${it.packageName}" } },
-            ) { row ->
-                AppGridRow(row.size) {
-                    row.forEach { entry -> RecolorAppGridCell(entry, options, viewModel) }
-                }
-            }
-            item {
                 Section(stringResource(R.string.fixed_icon_shape)) {
                     FixedShapePicker(options.fixedShape, viewModel::setFixedShape, state.fixedBackgroundName, onPickFixedBackground, viewModel::clearFixedBackground)
                     Hint(stringResource(R.string.fixed_shape_section_detail))
@@ -2286,6 +2268,8 @@ private fun RecolorScreen(
     val options = state.options
     val previewIcons = remember(summary) { viewModel.fixedPreviewIconChoices() }
     val snackbar = remember { SnackbarHostState() }
+    val selectionActive = state.selectedGridKeys.isNotEmpty()
+    BackHandler(enabled = selectionActive) { viewModel.clearGridSelection() }
     LaunchedEffect(summary) { viewModel.loadRecolorApps() }
     LaunchedEffect(state.error) {
         state.error?.let {
@@ -2299,32 +2283,50 @@ private fun RecolorScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(stringResource(R.string.recolor_title), style = MaterialTheme.typography.titleLarge)
-                        Text(summary.fileName, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (selectionActive) {
+                        Text(
+                            pluralStringResource(R.plurals.icons_selected_count, state.selectedGridKeys.size, state.selectedGridKeys.size),
+                            style = MaterialTheme.typography.titleLarge,
+                        )
+                    } else {
+                        Column {
+                            Text(stringResource(R.string.recolor_title), style = MaterialTheme.typography.titleLarge)
+                            Text(summary.fileName, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
                     }
                 },
-                navigationIcon = { TextButton(onClick = viewModel::reset) { Text(stringResource(R.string.close)) } },
+                navigationIcon = {
+                    if (selectionActive) {
+                        TextButton(onClick = viewModel::clearGridSelection) { Text(stringResource(R.string.cancel)) }
+                    } else {
+                        TextButton(onClick = viewModel::reset) { Text(stringResource(R.string.close)) }
+                    }
+                },
             )
         },
         bottomBar = {
-            Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 3.dp) {
-                Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)) {
-                    Text(
-                        stringResource(R.string.recolor_summary, summary.imageCount, state.recolorMissing),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Button(
-                        onClick = onSave,
-                        modifier = Modifier.fillMaxWidth().height(52.dp),
-                        shape = MaterialTheme.shapes.large,
-                    ) {
+            Column {
+                if (selectionActive) {
+                    CurveSelectionPanel(state, viewModel)
+                }
+                Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 3.dp) {
+                    Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)) {
                         Text(
-                            if (state.hasFileAccess) stringResource(R.string.save_into, File(state.outputDir).name)
-                            else stringResource(R.string.save_mtz),
+                            stringResource(R.string.recolor_summary, summary.imageCount, state.recolorMissing),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        Spacer(Modifier.height(6.dp))
+                        Button(
+                            onClick = onSave,
+                            modifier = Modifier.fillMaxWidth().height(52.dp),
+                            shape = MaterialTheme.shapes.large,
+                        ) {
+                            Text(
+                                if (state.hasFileAccess) stringResource(R.string.save_into, File(state.outputDir).name)
+                                else stringResource(R.string.save_mtz),
+                            )
+                        }
                     }
                 }
             }
@@ -2352,6 +2354,35 @@ private fun RecolorScreen(
                     FixedTintPaletteControls(options, state.wallpaperPalette, viewModel)
                     Hint(stringResource(R.string.recolor_intro))
                     Hint(stringResource(R.string.recolor_previews_hint))
+                }
+            }
+            item {
+                SectionHeader(
+                    stringResource(R.string.recolor_apps),
+                    if (state.recolorAppsLoading || !state.recolorAppsLoaded) {
+                        stringResource(R.string.recolor_apps_loading)
+                    } else {
+                        stringResource(R.string.recolor_apps_detail, state.recolorApps.size, state.recolorMissing)
+                    },
+                )
+            }
+            items(
+                state.recolorApps.chunked(AppGridColumns),
+                key = { row -> row.joinToString(",") { "recolor:" + it.packageName } },
+            ) { row ->
+                AppGridRow(row.size) {
+                    row.forEach { entry ->
+                        val key = PorterViewModel.recolorContrastKey(entry.packageName)
+                        RecolorAppGridCell(
+                            entry = entry,
+                            options = options,
+                            curve = state.iconCurves[key] ?: GrayscaleCurve(),
+                            selected = key in state.selectedGridKeys,
+                            viewModel = viewModel,
+                            onClick = { if (selectionActive) viewModel.toggleGridSelection(key) },
+                            onLongClick = { viewModel.toggleGridSelection(key) },
+                        )
+                    }
                 }
             }
             item {
@@ -2429,19 +2460,25 @@ private fun RecolorScreen(
 }
 
 /**
- * One app in the recolor grid, rendered the way the export will render it - a themed icon through the tint,
- * a skipped one through the theme's own mask and plate - rather than as a generic tinted glyph, so what the
- * grid shows is what lands in the archive.
+ * One app in the recolor grid, rendered the way the export will render it - a themed icon through the tint
+ * and its tone curve, a skipped one through the theme's own mask and plate - rather than as a generic tinted
+ * glyph, so what the grid shows is what lands in the archive. Long-press starts the same batch selection the
+ * porting screen uses, which is what the tone curve is edited through.
  */
 @Composable
 private fun RowScope.RecolorAppGridCell(
     entry: RecolorApp,
     options: BuildOptions,
+    curve: GrayscaleCurve,
+    selected: Boolean,
     viewModel: PorterViewModel,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
 ) {
     val bitmap by produceState<ImageBitmap?>(
         initialValue = null,
         entry.imageId,
+        curve,
         options.fixedTintColor,
         options.fixedTintStrength,
         options.fixedTintBlendMode,
@@ -2451,10 +2488,15 @@ private fun RowScope.RecolorAppGridCell(
     ) {
         // Same settle as [Thumbnail]: a slider drag re-keys every visible cell at once.
         if (value != null) delay(90)
-        value = viewModel.recolorThumbnail(entry, options)?.asImageBitmap()
+        value = viewModel.recolorThumbnail(entry, options, curve)?.asImageBitmap()
     }
     Column(
-        modifier = Modifier.weight(1f).padding(vertical = 8.dp, horizontal = 4.dp),
+        modifier = Modifier
+            .weight(1f)
+            .clip(MaterialTheme.shapes.medium)
+            .then(if (selected) Modifier.background(MaterialTheme.colorScheme.primaryContainer) else Modifier)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(vertical = 8.dp, horizontal = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -2470,12 +2512,26 @@ private fun RowScope.RecolorAppGridCell(
                     Image(it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
                 }
             }
-            if (entry.generated) {
+            if (selected) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .size(16.dp)
+                        .background(MaterialTheme.colorScheme.primary, CircleShape)
+                        .border(1.dp, MaterialTheme.colorScheme.background, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("✓", color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.labelSmall)
+                }
+            } else if (entry.generated || !curve.isIdentity) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .size(10.dp)
-                        .background(MaterialTheme.colorScheme.tertiary, CircleShape)
+                        .background(
+                            if (curve.isIdentity) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
+                            CircleShape,
+                        )
                         .border(1.dp, MaterialTheme.colorScheme.background, CircleShape),
                 )
             }

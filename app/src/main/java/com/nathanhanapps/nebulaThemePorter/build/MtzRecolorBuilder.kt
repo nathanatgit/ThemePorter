@@ -6,6 +6,7 @@ import android.os.Build
 import com.nathanhanapps.nebulaThemePorter.R
 import com.nathanhanapps.nebulaThemePorter.core.BuildOptions
 import com.nathanhanapps.nebulaThemePorter.core.DeviceIconId
+import com.nathanhanapps.nebulaThemePorter.core.GrayscaleCurve
 import com.nathanhanapps.nebulaThemePorter.core.MtzRecolor
 import com.nathanhanapps.nebulaThemePorter.core.NebulaSpec
 import com.nathanhanapps.nebulaThemePorter.render.Bitmaps
@@ -57,6 +58,12 @@ class MtzRecolorBuilder(private val context: Context) {
          */
         installedPackages: Set<String>,
         openOutput: () -> OutputStream,
+        /**
+         * Per-icon tone curves, keyed the way the UI knows the artwork: the theme's own icons by their
+         * [MtzSource] image id, and an app the theme skips by its [DeviceIconId]. Applied before the tint,
+         * as in a Nebula build.
+         */
+        iconCurves: Map<String, GrayscaleCurve> = emptyMap(),
         onProgress: (BuildProgress) -> Unit,
     ): RecolorSummary = withContext(Dispatchers.Default) {
         val icons = source.iconsArchive
@@ -85,6 +92,11 @@ class MtzRecolorBuilder(private val context: Context) {
             emptyList()
         }
         val drawableDir = MtzRecolor.drawableDir(names)
+        // The UI keys an edit by the image id of the entry the parser surfaced; re-key by drawable name so
+        // every density variant of that icon is edited, not only the one that happened to be listed.
+        val curvesByName = iconCurves.mapNotNull { (imageId, curve) ->
+            names.firstOrNull { MtzSource.imageId(it) == imageId }?.let(MtzRecolor::stemOf)?.let { it to curve }
+        }.toMap()
         val size = iconSize(mask, pattern)
         var recolored = 0
         var dropped = 0
@@ -99,7 +111,13 @@ class MtzRecolorBuilder(private val context: Context) {
                     ensureActive()
                     val rendered = coroutineScope {
                         chunk.map { entry ->
-                            async { Rendered(entry, render(icons, entry, options, installedPackages, pattern)) }
+                            async {
+                                // By drawable name, not by entry: a theme can carry the same icon at several
+                                // densities, and an edit made against the one the parser surfaced belongs to
+                                // all of them.
+                                val curve = MtzRecolor.stemOf(entry.name)?.let(curvesByName::get)
+                                Rendered(entry, render(icons, entry, options, installedPackages, pattern, curve))
+                            }
                         }.awaitAll()
                     }
                     rendered.forEach { result ->
@@ -125,7 +143,8 @@ class MtzRecolorBuilder(private val context: Context) {
 
                 missing.forEach { packageName ->
                     ensureActive()
-                    val bytes = generate(packageName, options, mask, pattern, border, source.iconScale ?: 1f, size)
+                    val curve = iconCurves[DeviceIconId.of(packageName, null)]
+                    val bytes = generate(packageName, options, mask, pattern, border, source.iconScale ?: 1f, size, curve)
                     done++
                     if (bytes != null) {
                         put(zip, ZipEntry(MtzRecolor.entryFor(drawableDir, packageName)).apply { method = ZipEntry.DEFLATED }, bytes)
@@ -176,21 +195,27 @@ class MtzRecolorBuilder(private val context: Context) {
         options: BuildOptions,
         installedPackages: Set<String>,
         pattern: Bitmap?,
+        curve: GrayscaleCurve?,
     ): ByteArray? {
         val use = MtzRecolor.use(entry.name)
         if (use == MtzRecolor.Use.COPY) return null
         if (use == MtzRecolor.Use.APP_ICON && options.onlyInstalledApps && !covered(entry.name, installedPackages)) return null
         val tint = options.fixedTintColor?.toInt()
         val plain = use == MtzRecolor.Use.ASSET || options.fixedShape.isOriginal
-        // Nothing to do: no tint, and no shape to bake in. Copying the original is then both faster and exact.
-        if (tint == null && plain) return null
+        val curveLut = curve?.takeUnless { it.isIdentity }?.lut()
+        // Nothing to do: no tint, no curve and no shape to bake in. Copying is then both faster and exact.
+        if (tint == null && curveLut == null && plain) return null
 
         val bytes = runCatching { icons.getInputStream(entry).use { it.readBytes() } }.getOrNull() ?: return null
         val bitmap = Bitmaps.decode(bytes, FULL_SIZE) ?: return null
         val out = if (plain) {
             // Theme-wide artwork, and every icon in a plain recolor, keeps its own pixel size and outline:
             // running those through the shape pipeline would square off artwork the theme drew deliberately.
-            tint?.let { Bitmaps.tint(bitmap, it, options.fixedTintStrength, options.fixedTintBlendMode) }
+            val curved = curveLut?.let { Bitmaps.curve(bitmap, it) }
+            val base = curved ?: bitmap
+            tint?.let { color ->
+                Bitmaps.tint(base, color, options.fixedTintStrength, options.fixedTintBlendMode).also { curved?.recycle() }
+            } ?: curved
         } else {
             FixedIconArt.render(
                 source = bitmap,
@@ -200,6 +225,7 @@ class MtzRecolorBuilder(private val context: Context) {
                 iconAlpha = options.fixedIconAlpha,
                 tintColor = tint,
                 tintStrength = options.fixedTintStrength,
+                curveLut = curveLut,
                 tintBlendMode = options.fixedTintBlendMode,
                 backgroundScale = options.fixedBackgroundScale,
                 padColor = options.padBackground.toInt(),
@@ -220,6 +246,7 @@ class MtzRecolorBuilder(private val context: Context) {
         border: Bitmap?,
         scale: Float,
         size: Int,
+        curve: GrayscaleCurve?,
     ): ByteArray? {
         val glyph = InstalledApps.decodeIcon(
             context, DeviceIconId.of(packageName, null), size * 2, options.generatedIconOwnBackground,
@@ -228,6 +255,7 @@ class MtzRecolorBuilder(private val context: Context) {
             MiuiIconArt.render(
                 glyph, size, mask, pattern, border, scale,
                 options.fixedTintColor?.toInt(), options.fixedTintStrength, options.fixedTintBlendMode,
+                curveLut = curve?.takeUnless { it.isIdentity }?.lut(),
             )
         } else {
             FixedIconArt.render(
@@ -238,6 +266,7 @@ class MtzRecolorBuilder(private val context: Context) {
                 iconAlpha = options.fixedIconAlpha,
                 tintColor = options.fixedTintColor?.toInt(),
                 tintStrength = options.fixedTintStrength,
+                curveLut = curve?.takeUnless { it.isIdentity }?.lut(),
                 tintBlendMode = options.fixedTintBlendMode,
                 backgroundScale = options.fixedBackgroundScale,
                 padColor = options.padBackground.toInt(),

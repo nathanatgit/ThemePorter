@@ -409,14 +409,19 @@ object MiuiIconArt {
         tintColor: Int?,
         tintStrength: Float,
         tintBlendMode: TintBlendMode = TintBlendMode.MULTIPLY,
+        /** [com.nathanhanapps.nebulaThemePorter.core.GrayscaleCurve.lut], applied before the tint, exactly as
+         * [FixedIconArt.render] applies it - one app's icon can be far lighter or darker than the theme's own. */
+        curveLut: IntArray? = null,
     ): Bitmap {
-        val tinted = tintColor?.let { Bitmaps.tint(glyph, it, tintStrength, tintBlendMode) } ?: glyph
+        val prepared = curveLut?.let { Bitmaps.curve(glyph, it) } ?: glyph
+        val tinted = tintColor?.let { Bitmaps.tint(prepared, it, tintStrength, tintBlendMode) } ?: prepared
         val art = if (mask == null) {
             Bitmaps.fit(tinted, size)
         } else {
             val scaled = Bitmaps.fit(tinted, size, scale.coerceIn(0.5f, 1.25f))
             Bitmaps.maskedBy(scaled, mask, size).also { scaled.recycle() }
         }
+        if (prepared !== glyph && prepared !== tinted) prepared.recycle()
         if (tinted !== glyph) tinted.recycle()
         if (pattern == null && border == null) return art
 
