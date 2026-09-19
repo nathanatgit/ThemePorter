@@ -20,6 +20,8 @@
     <!-- Launcher activities of installed apps name the icon files (package-activity) in generated themes. -->
     <queries>
         <package android:name="com.zte.beautify" />
+        <!-- Xiaomi/HyperOS Themes, where a recolored .mtz is applied. -->
+        <package android:name="com.android.thememanager" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />

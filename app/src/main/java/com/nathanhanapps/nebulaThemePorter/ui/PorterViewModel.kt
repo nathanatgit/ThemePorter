@@ -966,6 +966,9 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
                 mutableState.value = base.copy(
                     stage = if (recolor) Stage.RECOLOR else Stage.CONFIGURE,
                     recolorMode = recolor,
+                    // A generated icon here is drawn on the theme's own plate, so the app's own backdrop would
+                    // only hide it - a black-backed icon stays black among a set that has turned one colour.
+                    options = if (recolor) base.options.copy(generatedIconOwnBackground = false) else base.options,
                     recolorMissing = if (recolor) MtzRecolor.missingPackages(opened.icons.map { it.key }, installed.keys).size else 0,
                     summary = SourceSummary(
                         kind = opened.kind,

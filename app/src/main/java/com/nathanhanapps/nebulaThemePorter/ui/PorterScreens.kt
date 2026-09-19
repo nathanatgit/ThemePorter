@@ -251,7 +251,12 @@ fun PorterApp(viewModel: PorterViewModel) {
             },
         )
         Stage.BUILDING -> BusyScreen(state.progress?.label ?: stringResource(R.string.building), state.progress)
-        Stage.DONE -> DoneScreen(state, onAdjust = viewModel::back, onHome = viewModel::reset, onOpenThemes = { openThemesApp(context) })
+        Stage.DONE -> DoneScreen(
+            state,
+            onAdjust = viewModel::back,
+            onHome = viewModel::reset,
+            onOpenThemes = { openThemesApp(context, state.recolorMode) },
+        )
         Stage.ERROR -> ErrorScreen(state.error.orEmpty(), onHome = viewModel::reset)
     }
 
@@ -341,11 +346,17 @@ private fun SavedProjectSheet(
     )
 }
 
-private fun themesAppIntent(context: Context) =
-    context.packageManager.getLaunchIntentForPackage(StorageAccess.THEMES_APP_PACKAGE)
+/**
+ * The Themes app a finished file is applied from. A recolored .mtz belongs to Xiaomi's, which is the only one
+ * present on the phones that feature is for; everything else this app builds belongs to ZTE's.
+ */
+private fun themesAppIntent(context: Context, miui: Boolean = false): Intent? {
+    val packageName = if (miui) StorageAccess.MIUI_THEMES_APP_PACKAGE else StorageAccess.THEMES_APP_PACKAGE
+    return context.packageManager.getLaunchIntentForPackage(packageName)
+}
 
-private fun openThemesApp(context: Context) {
-    themesAppIntent(context)?.let { runCatching { context.startActivity(it) } }
+private fun openThemesApp(context: Context, miui: Boolean = false) {
+    themesAppIntent(context, miui)?.let { runCatching { context.startActivity(it) } }
 }
 
 @Composable
@@ -2357,6 +2368,14 @@ private fun RecolorScreen(
                         checked = options.generateMissingAppIcons,
                         onChange = viewModel::setGenerateMissingAppIcons,
                     )
+                    if (options.generateMissingAppIcons) {
+                        SwitchRow(
+                            title = stringResource(R.string.recolor_own_background),
+                            detail = stringResource(R.string.recolor_own_background_detail),
+                            checked = options.generatedIconOwnBackground,
+                            onChange = viewModel::setGeneratedIconOwnBackground,
+                        )
+                    }
                     SwitchRow(
                         title = stringResource(R.string.installed_apps_only),
                         detail = stringResource(R.string.recolor_installed_only_detail),
@@ -2395,7 +2414,7 @@ private fun DoneScreen(state: PorterState, onAdjust: () -> Unit, onHome: () -> U
     val result = state.result
     val recolored = state.recolorResult
     val context = LocalContext.current
-    val canOpenThemes = remember { themesAppIntent(context) != null } && !state.recolorMode
+    val canOpenThemes = remember(state.recolorMode) { themesAppIntent(context, state.recolorMode) != null }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
             modifier = Modifier.fillMaxSize().safeDrawingPadding().padding(20.dp),

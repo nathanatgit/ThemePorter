@@ -259,6 +259,8 @@
     <string name="recolor_summary">%1$d 个图标 · %2$d 个应用没有图标</string>
     <string name="recolor_fill_missing">为主题未收录的应用生成图标</string>
     <string name="recolor_fill_missing_detail">以应用自身的图标为素材，套用本主题的底板和蒙版绘制，使其与其他图标一致，而不是保留原本的配色。本机有 %1$d 个应用需要。</string>
+    <string name="recolor_own_background">保留这些应用自身的背景</string>
+    <string name="recolor_own_background_detail">默认关闭：生成的图标已经放在本主题自己的底板上，再保留应用自身的背景，只会让它在已统一配色的一组图标中显得格格不入。若某些图标没有自身背景就难以辨认，可以打开。</string>
     <string name="recolor_installed_only_detail">不写入本机未安装应用的图标。主题体积更小，但对其他人不再适用。</string>
     <string name="recolor_shape_hint">会在主题原有图案之上烤制所选形状。保持“无”即可让每个图标维持原样。</string>
     <string name="save_into">保存到 %1$s</string>

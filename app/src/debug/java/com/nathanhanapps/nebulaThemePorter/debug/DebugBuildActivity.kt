@@ -89,6 +89,8 @@ class DebugBuildActivity : ComponentActivity() {
                             fixedTintBlendMode = blendMode,
                             fixedIconScale = iconScale, fixedBackgroundScale = backgroundScale,
                             generateMissingAppIcons = intent.getBooleanExtra("fillMissing", true),
+                            // Matches the recolor screen's own default, so a headless run shows what the app does.
+                            generatedIconOwnBackground = intent.getBooleanExtra("ownBackground", false),
                         )
                         val installed = InstalledApps.launcherActivities(this@DebugBuildActivity).keys
                         notes.append("recolor icons=${src.icons.size} installed=${installed.size}\n")

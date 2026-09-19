@@ -15,6 +15,9 @@ import java.io.File
 object StorageAccess {
     const val THEMES_APP_PACKAGE = "com.zte.beautify"
 
+    /** Where a recolored .mtz is applied from. Present on Xiaomi/HyperOS, absent on a ZTE phone. */
+    const val MIUI_THEMES_APP_PACKAGE = "com.android.thememanager"
+
     val root: File get() = Environment.getExternalStorageDirectory()
 
     private const val EXTERNAL_STORAGE_AUTHORITY = "com.android.externalstorage.documents"
