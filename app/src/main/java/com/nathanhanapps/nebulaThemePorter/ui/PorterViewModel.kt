@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Rect
+import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import com.nathanhanapps.nebulaThemePorter.R
@@ -47,6 +48,9 @@ import com.nathanhanapps.nebulaThemePorter.source.SourceKind
 import com.nathanhanapps.nebulaThemePorter.source.SourceWallpaper
 import com.nathanhanapps.nebulaThemePorter.source.ThemeSource
 import com.nathanhanapps.nebulaThemePorter.storage.PorterPreferences
+import com.nathanhanapps.nebulaThemePorter.storage.ProjectSource
+import com.nathanhanapps.nebulaThemePorter.storage.ProjectStore
+import com.nathanhanapps.nebulaThemePorter.storage.SavedProject
 import com.nathanhanapps.nebulaThemePorter.storage.StorageAccess
 import java.io.File
 import java.io.OutputStream
@@ -123,6 +127,15 @@ data class PorterState(
     val outputName: String = "",
     val outputPath: String? = null,
     val lastCrash: String? = null,
+    /** Saved tweaks shown in the home gallery, newest first. */
+    val savedProjects: List<SavedProject> = emptyList(),
+    /** The saved project this session is editing, so Save updates it instead of piling up copies. */
+    val currentProjectId: String? = null,
+    /** Set briefly after a save so the UI can acknowledge it. */
+    val savedNotice: String? = null,
+    /** Build straight after the source finishes loading - the gallery's Build shortcut, which has to wait for
+     * the pack to be re-read before there is anything to build. */
+    val pendingBuild: Boolean = false,
 )
 
 class PorterViewModel(application: Application) : AndroidViewModel(application) {
@@ -158,6 +171,14 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
     private var outputNameEdited = false
     private var planJob: Job? = null
     private var buildJob: Job? = null
+    private val projects = ProjectStore.forApp(application)
+
+    /** How the currently loaded source would be found again, carried into any save of this session. */
+    private var sourceRef: ProjectSource? = null
+
+    init {
+        refreshProjects()
+    }
     private val thumbnails = object : LruCache<String, Bitmap>(24 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
     }
@@ -170,7 +191,17 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /** From the system file picker. Files on this phone's storage are read in place; anything else is copied first. */
-    fun open(kind: SourceKind, uri: Uri) = load {
+    fun open(kind: SourceKind, uri: Uri) = load(
+        // Without All-files access a picked document is only reachable through its Uri, and that grant dies
+        // with the process - so a project saved from it would be unopenable on next launch. Ask for the
+        // persistable one here, while the picker's grant is still live.
+        sourceRef = ProjectSource(
+            kind = kind,
+            path = StorageAccess.fileFor(app, uri)?.absolutePath,
+            uri = uri.takeIf { StorageAccess.fileFor(app, it) == null }?.also(::persistRead)?.toString(),
+            fileName = SourceFiles.displayName(app, uri) ?: uri.lastPathSegment.orEmpty(),
+        ),
+    ) {
         val file = StorageAccess.fileFor(app, uri)
         when {
             file != null && kind == SourceKind.ICON_PACK -> IconPackSource.open(app, file)
@@ -196,8 +227,18 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun openInstalledIconPack(iconPack: InstalledApps.IconPack) = load {
+    fun openInstalledIconPack(iconPack: InstalledApps.IconPack) = load(
+        sourceRef = ProjectSource(
+            kind = SourceKind.ICON_PACK,
+            packageName = iconPack.packageName,
+            fileName = iconPack.label,
+        ),
+    ) {
         IconPackSource.open(app, File(iconPack.apkPath))
+    }
+
+    private fun persistRead(uri: Uri) {
+        runCatching { app.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
     }
 
     fun setLabelZh(value: String) {
@@ -304,11 +345,18 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
 
     /** "Normalize": brightness-shifts each selected icon by its own amount so they all land on the same mean
      * grayscale level - unlike [setCurveForSelection], which applies one identical curve to every selection,
-     * this gives each app whatever shift ITS source icon needs, so a naturally dark icon and a naturally light
-     * one end up looking similarly bright after tint instead of one staying an outlier. The target is the mean
-     * of the combined selection (the same histogram already shown behind the curve), so the group's overall
-     * brightness stays put and individual icons move toward each other rather than to a fixed reference point.
-     * A later drag on the shared curve editor still applies identically to all selected, replacing this. */
+     * this gives each app whatever shift ITS icon needs, so a dark icon and a light one end up looking similarly
+     * bright after tint instead of one staying an outlier.
+     *
+     * It measures each icon as it currently looks - through whatever curve is already on it - and shifts that
+     * curve, rather than measuring the untouched source and overwriting the curve with a bare offset. Shaping a
+     * few icons by hand and then evening the group out is the normal way to use these two controls together, and
+     * the old behaviour silently threw that shaping away. Measuring post-curve also makes the button
+     * settle: press it twice and the second press finds the means already level, so it barely moves.
+     *
+     * The target is the mean of the selection as it stands, so the group's overall brightness stays put and
+     * icons move toward each other rather than toward a fixed reference. A later drag on the shared curve editor
+     * still applies one identical curve to everything selected, replacing this. */
     fun normalizeSelection() {
         val state = mutableState.value
         val selection = state.selectedGridKeys
@@ -316,22 +364,35 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             val sourceIds = selection.mapNotNull { key -> resolveSourceId(state, key)?.let { key to it } }.toMap()
             if (sourceIds.isEmpty()) return@launch
-            val means = sourceIds.mapValues { (_, sourceId) -> grayscaleMean(sourceId) }
+            val curves = sourceIds.mapValues { (key, _) -> state.iconCurves[key] ?: GrayscaleCurve() }
+            val means = sourceIds.mapValues { (key, sourceId) ->
+                grayscaleMean(sourceId, curves.getValue(key).takeUnless(GrayscaleCurve::isIdentity)?.lut())
+            }
             val validMeans = means.values.filterNotNull()
             if (validMeans.isEmpty()) return@launch
             val target = validMeans.average().toFloat()
             val newCurves = means.mapNotNull { (key, mean) ->
                 mean ?: return@mapNotNull null
                 val delta = (target - mean).coerceIn(-1f, 1f)
-                key to GrayscaleCurve(listOf(CurvePoint(0f, (0f + delta).coerceIn(0f, 1f)), CurvePoint(1f, (1f + delta).coerceIn(0f, 1f))))
+                key to curves.getValue(key).shiftedBy(delta)
             }.toMap()
             mutableState.update { it.copy(iconCurves = it.iconCurves + newCurves) }
         }
     }
 
-    /** Mean grayscale level (0..1, alpha-weighted) of one source icon, or null if it couldn't be decoded. */
-    private suspend fun grayscaleMean(sourceId: String): Float? {
-        val bins = grayscaleHistogram(listOf(sourceId))
+    /**
+     * The same curve moved [delta] brighter or darker. Offsetting every control point's y offsets the whole
+     * spline by exactly that much: the Hermite tangents are built from secants, which depend on differences
+     * between y values and so are unchanged by a constant. Clamping at the ends is the one exception, and is
+     * why an icon already pinned at black or white can't be shifted the full amount.
+     */
+    private fun GrayscaleCurve.shiftedBy(delta: Float): GrayscaleCurve =
+        GrayscaleCurve(points.map { CurvePoint(it.x, (it.y + delta).coerceIn(0f, 1f)) })
+
+    /** Mean grayscale level (0..1, alpha-weighted) of one source icon as seen through [lut] (null for the
+     * untouched source), or null if it couldn't be decoded. */
+    private suspend fun grayscaleMean(sourceId: String, lut: IntArray? = null): Float? {
+        val bins = grayscaleHistogram(listOf(sourceId), lut)
         val total = bins.sum()
         if (total == 0) return null
         val weighted = bins.indices.sumOf { level -> level.toLong() * bins[level] }
@@ -358,8 +419,11 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
     fun resolveSourceId(key: String): String? = resolveSourceId(mutableState.value, key)
 
     /** A 256-bucket grayscale histogram (alpha-weighted, transparent pixels excluded) across every image in
-     * [imageIds], for the curve editor's backdrop. Reuses cached thumbnail decodes where possible. */
-    suspend fun grayscaleHistogram(imageIds: List<String>): IntArray = withContext(Dispatchers.Default) {
+     * [imageIds], for the curve editor's backdrop. Reuses cached thumbnail decodes where possible. [lut], when
+     * given, remaps each channel first, exactly as [com.nathanhanapps.nebulaThemePorter.render.Bitmaps.curve]
+     * does before the tint runs - so the result describes the icon as it currently looks, not as it was
+     * imported. */
+    suspend fun grayscaleHistogram(imageIds: List<String>, lut: IntArray? = null): IntArray = withContext(Dispatchers.Default) {
         val bins = IntArray(256)
         imageIds.distinct().forEach { id ->
             val bitmap = synchronized(thumbnails) { thumbnails.get(id) } ?: runCatching {
@@ -370,9 +434,11 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
             pixels.forEach { pixel ->
                 val alpha = pixel ushr 24
                 if (alpha == 0) return@forEach
-                val r = (pixel shr 16) and 0xFF
-                val g = (pixel shr 8) and 0xFF
-                val b = pixel and 0xFF
+                // Per channel, then luma - the order the real pipeline uses. Mapping the grey level instead
+                // would agree only for already-grey pixels.
+                val r = ((pixel shr 16) and 0xFF).let { lut?.get(it) ?: it }
+                val g = ((pixel shr 8) and 0xFF).let { lut?.get(it) ?: it }
+                val b = (pixel and 0xFF).let { lut?.get(it) ?: it }
                 val gray = (r * 0.2126f + g * 0.7152f + b * 0.0722f).roundToInt().coerceIn(0, 255)
                 bins[gray]++
             }
@@ -764,12 +830,18 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
         super.onCleared()
     }
 
-    private fun load(opener: suspend () -> ThemeSource) {
+    /**
+     * [sourceRef] records how this source could be reopened later; [restore] replays a saved project's tweaks
+     * over the freshly read source once it has loaded, which is what makes reopening a project cheap - the pack
+     * is re-read from disk, but nothing the user decided about it has to be redone.
+     */
+    private fun load(sourceRef: ProjectSource?, restore: SavedProject? = null, opener: suspend () -> ThemeSource) {
         closeSource()
         wallpaperFile?.delete()
         wallpaperFile = null
         fixedBackgroundFile?.delete()
         fixedBackgroundFile = null
+        this.sourceRef = sourceRef
         val base = baseState(mutableState.value)
         mutableState.value = base.copy(stage = Stage.LOADING)
         viewModelScope.launch {
@@ -812,9 +884,33 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
                     selectedWallpaperId = opened.extras.wallpaper,
                     outputName = defaultOutputName(opened.suggestedLabel),
                 )
-                // A fresh gradient palette each time a source loads, so the generated wallpaper isn't the same
-                // three colors on every theme unless the user deliberately picks them.
-                randomizeGeneratedWallpaperColors()
+                if (restore == null) {
+                    // A fresh gradient palette each time a source loads, so the generated wallpaper isn't the
+                    // same three colors on every theme unless the user deliberately picks them.
+                    randomizeGeneratedWallpaperColors()
+                } else {
+                    // Assignments are replayed rather than merged: the saved ones already include whatever the
+                    // planner auto-assigned when the project was created, plus every manual override since.
+                    restoreImages(restore)
+                    mutableState.update {
+                        it.copy(
+                            labelZh = restore.labelZh,
+                            labelEn = restore.labelEn,
+                            author = restore.author,
+                            intro = restore.intro,
+                            outputName = restore.outputName.ifBlank { it.outputName },
+                            options = restore.options,
+                            assignments = restore.assignments.filterKeys { key -> key in visibleIds },
+                            userAssignments = restore.userAssignments,
+                            iconCurves = restore.iconCurves,
+                            selectedWallpaperId = restore.selectedWallpaperId,
+                            wallpaperName = restore.wallpaperName,
+                            fixedBackgroundName = restore.fixedBackgroundName,
+                            currentProjectId = restore.id,
+                        )
+                    }
+                    outputNameEdited = restore.outputName.isNotBlank()
+                }
                 replan()
                 refreshWallpaperVisual()
             }.onFailure { error ->
@@ -865,6 +961,10 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
                 summary to withContext(Dispatchers.IO) { finish() }
             }.onSuccess { (summary, path) ->
                 mutableState.update { it.copy(stage = Stage.DONE, result = summary, progress = null, outputPath = path) }
+                // A build is the point at which these tweaks are worth keeping, so the theme can be adjusted
+                // and rebuilt later without re-curving every icon. Saving manually beforehand is still offered.
+                // Silent: the Done screen is showing by now, and the save snackbar belongs to Configure.
+                saveProject(notify = false)
             }.onFailure { error ->
                 runCatching { cleanup() }
                 if (error is CancellationException) throw error
@@ -880,6 +980,129 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
      * pack's own appfilter declares), and which one a given ROM's launcher actually reads isn't something this
      * app controls; keying by source icon means the edit follows the artwork through every one of those files.
      */
+    fun refreshProjects() {
+        viewModelScope.launch {
+            val saved = withContext(Dispatchers.IO) { runCatching { projects.list() }.getOrDefault(emptyList()) }
+            mutableState.update { it.copy(savedProjects = saved) }
+        }
+    }
+
+    fun consumeSavedNotice() = mutableState.update { it.copy(savedNotice = null) }
+
+    /**
+     * Writes the current tweaks to disk, updating this session's project when there is one so repeated saves
+     * (and the automatic save after a build) don't pile up near-identical copies. The imported wallpaper and
+     * fixed background are copied out of the cache directory, which Android may clear at any time.
+     */
+    fun saveProject(notify: Boolean = true) {
+        val current = mutableState.value
+        val ref = sourceRef ?: return
+        viewModelScope.launch {
+            val id = current.currentProjectId ?: projects.newId()
+            val project = SavedProject(
+                id = id,
+                name = current.labelZh.ifBlank { current.labelEn }.ifBlank { ref.fileName },
+                savedAt = System.currentTimeMillis(),
+                source = ref,
+                labelZh = current.labelZh,
+                labelEn = current.labelEn,
+                author = current.author,
+                intro = current.intro,
+                outputName = current.outputName,
+                options = current.options,
+                assignments = current.assignments,
+                userAssignments = current.userAssignments,
+                iconCurves = current.iconCurves,
+                selectedWallpaperId = current.selectedWallpaperId,
+                wallpaperName = current.wallpaperName,
+                fixedBackgroundName = current.fixedBackgroundName,
+            )
+            val preview = runCatching { projectPreview(current) }.getOrNull()
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    projects.write(project)
+                    wallpaperFile?.copyTo(projects.wallpaperFile(id), overwrite = true)
+                    fixedBackgroundFile?.copyTo(projects.backgroundFile(id), overwrite = true)
+                    preview?.let { projects.previewFile(id).writeBytes(Bitmaps.png(it)) }
+                }
+            }
+            preview?.recycle()
+            mutableState.update { it.copy(currentProjectId = id, savedNotice = project.name.takeIf { _ -> notify }) }
+            refreshProjects()
+        }
+    }
+
+    fun consumePendingBuild() = mutableState.update { it.copy(pendingBuild = false) }
+
+    /**
+     * Reopens a saved project: re-reads its source, then replays every tweak over it. [build] is the gallery's
+     * one-tap rebuild, which can only run once the source is actually loaded, so it is carried as a flag the
+     * Configure screen acts on rather than being started here.
+     */
+    fun openProject(project: SavedProject, build: Boolean = false) {
+        val ref = project.source
+        load(sourceRef = ref, restore = project) {
+            val file = when {
+                ref.packageName != null -> InstalledApps.iconPacks(app).firstOrNull { it.packageName == ref.packageName }
+                    ?.let { File(it.apkPath) }
+                    ?: throw IllegalStateException(app.getString(R.string.project_source_missing, ref.fileName))
+                ref.path != null -> File(ref.path).takeIf(File::exists)
+                    ?: throw IllegalStateException(app.getString(R.string.project_source_missing, ref.fileName))
+                else -> null
+            }
+            when {
+                file != null && ref.kind == SourceKind.ICON_PACK -> IconPackSource.open(app, file)
+                file != null -> MtzSource.open(app, file)
+                ref.uri == null -> throw IllegalStateException(app.getString(R.string.project_source_missing, ref.fileName))
+                ref.kind == SourceKind.ICON_PACK -> IconPackSource.open(app, Uri.parse(ref.uri))
+                else -> MtzSource.open(app, Uri.parse(ref.uri))
+            }
+        }
+        if (build) mutableState.update { it.copy(pendingBuild = true) }
+    }
+
+    fun deleteProject(id: String) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { runCatching { projects.delete(id) } }
+            mutableState.update { if (it.currentProjectId == id) it.copy(currentProjectId = null) else it }
+            refreshProjects()
+        }
+    }
+
+    /** Copies a saved project's own wallpaper/background back into the cache the rest of the app reads them from. */
+    private suspend fun restoreImages(project: SavedProject) = withContext(Dispatchers.IO) {
+        val dir = File(app.cacheDir, "sources").apply { mkdirs() }
+        runCatching {
+            projects.wallpaperFile(project.id).takeIf(File::exists)
+                ?.copyTo(File(dir, "wallpaper"), overwrite = true)
+                ?.also { wallpaperFile = it }
+            projects.backgroundFile(project.id).takeIf(File::exists)
+                ?.copyTo(File(dir, "fixed_icon_background"), overwrite = true)
+                ?.also { fixedBackgroundFile = it }
+        }
+        Unit
+    }
+
+    /** A few representative icons side by side, as the gallery card's picture of what this project looks like. */
+    private suspend fun projectPreview(state: PorterState): Bitmap? {
+        val ids = fixedPreviewIconChoices().take(4).ifEmpty { return null }
+        val size = NebulaSpec.PREVIEW_ICON_SIZE
+        val tiles = ids.mapNotNull { id ->
+            thumbnail(
+                id, state.options.fixedTintColor?.toInt(), state.options.fixedTintStrength,
+                GrayscaleCurve(), state.options.takeUnless { it.fixedShape.isOriginal },
+                state.options.generatedIconOwnBackground, state.options.fixedTintBlendMode,
+            )
+        }
+        if (tiles.isEmpty()) return null
+        val out = Bitmap.createBitmap(size * tiles.size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        tiles.forEachIndexed { index, tile ->
+            canvas.drawBitmap(tile, null, android.graphics.Rect(index * size, 0, (index + 1) * size, size), null)
+        }
+        return out
+    }
+
     private fun sourceIdCurveMap(state: PorterState): Map<String, GrayscaleCurve> = buildMap {
         state.iconCurves.forEach { (key, curve) -> resolveSourceId(state, key)?.let { put(it, curve) } }
     }
@@ -888,6 +1111,8 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
         hasFileAccess = StorageAccess.hasAllFilesAccess(app),
         outputDir = prefs.outputDir.absolutePath,
         lastCrash = from.lastCrash,
+        // The gallery belongs to the app, not to whichever source happens to be open.
+        savedProjects = from.savedProjects,
     )
 
     private fun syncOutputName() {

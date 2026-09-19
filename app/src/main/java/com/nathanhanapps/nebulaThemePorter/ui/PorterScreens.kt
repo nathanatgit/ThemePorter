@@ -62,6 +62,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -127,10 +128,14 @@ import com.nathanhanapps.nebulaThemePorter.core.TintBlendMode
 import com.nathanhanapps.nebulaThemePorter.core.ZteSystemApp
 import com.nathanhanapps.nebulaThemePorter.core.ZteSystemApps
 import com.nathanhanapps.nebulaThemePorter.render.Shapes
+import com.nathanhanapps.nebulaThemePorter.storage.ProjectStore
+import com.nathanhanapps.nebulaThemePorter.storage.SavedProject
 import com.nathanhanapps.nebulaThemePorter.source.SourceKind
 import com.nathanhanapps.nebulaThemePorter.source.InstalledApps
 import com.nathanhanapps.nebulaThemePorter.storage.StorageAccess
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -201,9 +206,23 @@ fun PorterApp(viewModel: PorterViewModel) {
                 Toast.makeText(context, R.string.crash_copied, Toast.LENGTH_SHORT).show()
             },
             onOpenThemes = { openThemesApp(context) },
+            onOpenProject = { viewModel.openProject(it) },
+            onBuildProject = { viewModel.openProject(it, build = true) },
+            onDeleteProject = { viewModel.deleteProject(it.id) },
         )
         Stage.LOADING -> BusyScreen(stringResource(R.string.reading_source), null)
-        Stage.CONFIGURE -> ConfigureScreen(
+        Stage.CONFIGURE -> {
+            val startBuild = {
+                if (state.hasFileAccess) viewModel.buildToFolder() else saveTheme.launch(viewModel.suggestedFileName())
+                Unit
+            }
+            LaunchedEffect(state.pendingBuild, state.plannedNames) {
+                if (state.pendingBuild && state.plannedNames > 0) {
+                    viewModel.consumePendingBuild()
+                    startBuild()
+                }
+            }
+            ConfigureScreen(
             state = state,
             viewModel = viewModel,
             onPickWallpaper = { pickWallpaper.launch(arrayOf("image/*")) },
@@ -211,10 +230,9 @@ fun PorterApp(viewModel: PorterViewModel) {
             // Nubia DocumentsUI disables choosing /Theme itself. Start from its normal location picker instead.
             onChooseOutputFolder = { runCatching { chooseOutputFolder.launch(null) } },
             onRequestAccess = requestFileAccess,
-            onBuild = {
-                if (state.hasFileAccess) viewModel.buildToFolder() else saveTheme.launch(viewModel.suggestedFileName())
-            },
-        )
+            onBuild = startBuild,
+            )
+        }
         Stage.BUILDING -> BusyScreen(state.progress?.label ?: stringResource(R.string.building), state.progress)
         Stage.DONE -> DoneScreen(state, onAdjust = viewModel::back, onHome = viewModel::reset, onOpenThemes = { openThemesApp(context) })
         Stage.ERROR -> ErrorScreen(state.error.orEmpty(), onHome = viewModel::reset)
@@ -231,6 +249,79 @@ fun PorterApp(viewModel: PorterViewModel) {
             onDismiss = { showInstalledIconPacks = false },
         )
     }
+}
+
+/**
+ * One saved tweak in the home gallery. The picture is the strip of representative icons written at save time,
+ * so the card shows the shape/tint/curves that were actually saved rather than a generic placeholder.
+ */
+@Composable
+private fun SavedProjectCard(project: SavedProject, onClick: () -> Unit, onLongClick: () -> Unit) {
+    val context = LocalContext.current
+    val preview by produceState<ImageBitmap?>(initialValue = null, project.id, project.savedAt) {
+        value = withContext(Dispatchers.IO) {
+            val file = ProjectStore.forApp(context).previewFile(project.id)
+            runCatching { android.graphics.BitmapFactory.decodeFile(file.absolutePath) }.getOrNull()
+        }?.asImageBitmap()
+    }
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.large)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .clip(MaterialTheme.shapes.medium)
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center,
+            ) {
+                preview?.let {
+                    Image(it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                }
+            }
+            Text(
+                project.name,
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                project.source.fileName,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SavedProjectSheet(
+    project: SavedProject,
+    onEdit: () -> Unit,
+    onBuild: () -> Unit,
+    onRemove: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(project.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        text = { Text(project.source.fileName, style = MaterialTheme.typography.bodySmall) },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onRemove) { Text(stringResource(R.string.project_remove)) }
+                TextButton(onClick = onEdit) { Text(stringResource(R.string.project_edit)) }
+                TextButton(onClick = onBuild) { Text(stringResource(R.string.project_build)) }
+            }
+        },
+    )
 }
 
 private fun themesAppIntent(context: Context) =
@@ -250,9 +341,14 @@ private fun HomeScreen(
     onDismissCrash: () -> Unit,
     onCopyCrash: (String) -> Unit,
     onOpenThemes: () -> Unit,
+    onOpenProject: (SavedProject) -> Unit,
+    onBuildProject: (SavedProject) -> Unit,
+    onDeleteProject: (SavedProject) -> Unit,
 ) {
     val context = LocalContext.current
     val canOpenThemes = remember(context) { themesAppIntent(context) != null }
+    var projectMenu by remember { mutableStateOf<SavedProject?>(null) }
+    var projectToRemove by remember { mutableStateOf<SavedProject?>(null) }
     Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding).safeDrawingPadding(),
@@ -354,6 +450,31 @@ private fun HomeScreen(
                 }
             }
 
+            if (state.savedProjects.isNotEmpty()) {
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(stringResource(R.string.saved_tweaks), style = MaterialTheme.typography.titleSmall)
+                        Hint(stringResource(R.string.saved_tweaks_detail))
+                    }
+                }
+                // Chunked rows rather than a LazyVerticalGrid: this is already inside a LazyColumn, and nesting
+                // a lazy grid in one gives it unbounded height.
+                items(state.savedProjects.chunked(2)) { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        row.forEach { project ->
+                            Box(Modifier.weight(1f)) {
+                                SavedProjectCard(
+                                    project = project,
+                                    onClick = { onOpenProject(project) },
+                                    onLongClick = { projectMenu = project },
+                                )
+                            }
+                        }
+                        if (row.size == 1) Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
+
             item {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
@@ -396,6 +517,32 @@ private fun HomeScreen(
             }
         }
     }
+
+    projectMenu?.let { project ->
+        SavedProjectSheet(
+            project = project,
+            onEdit = { projectMenu = null; onOpenProject(project) },
+            onBuild = { projectMenu = null; onBuildProject(project) },
+            onRemove = { projectMenu = null; projectToRemove = project },
+            onDismiss = { projectMenu = null },
+        )
+    }
+    projectToRemove?.let { project ->
+        AlertDialog(
+            onDismissRequest = { projectToRemove = null },
+            title = { Text(stringResource(R.string.project_remove_title, project.name)) },
+            text = { Text(stringResource(R.string.project_remove_detail)) },
+            confirmButton = {
+                TextButton(onClick = { projectToRemove = null; onDeleteProject(project) }) {
+                    Text(stringResource(R.string.project_remove))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { projectToRemove = null }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
+    }
+
 }
 
 @Composable
@@ -606,6 +753,13 @@ private fun ConfigureScreen(
     var systemAppsExpanded by rememberSaveable { mutableStateOf(false) }
     var pickerUserStem by rememberSaveable { mutableStateOf<String?>(null) }
     val snackbar = remember { SnackbarHostState() }
+    val savedLabel = state.savedNotice?.let { stringResource(R.string.project_saved, it) }
+    LaunchedEffect(savedLabel) {
+        savedLabel?.let {
+            snackbar.showSnackbar(it)
+            viewModel.consumeSavedNotice()
+        }
+    }
     LaunchedEffect(state.error) {
         state.error?.let {
             snackbar.showSnackbar(it)
@@ -654,16 +808,26 @@ private fun ConfigureScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(Modifier.height(6.dp))
-                        Button(
-                            onClick = onBuild,
-                            enabled = state.plannedNames > 0 && (state.labelZh.isNotBlank() || state.labelEn.isNotBlank()),
-                            modifier = Modifier.fillMaxWidth().height(52.dp),
-                            shape = MaterialTheme.shapes.large,
-                        ) {
-                            Text(
-                                if (state.hasFileAccess) stringResource(R.string.build_into, File(state.outputDir).name)
-                                else stringResource(R.string.build_zmtp),
-                            )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            // Building saves automatically; this is for parking a half-finished set of curves.
+                            OutlinedButton(
+                                onClick = { viewModel.saveProject() },
+                                modifier = Modifier.height(52.dp),
+                                shape = MaterialTheme.shapes.large,
+                            ) {
+                                Text(stringResource(R.string.save_tweaks))
+                            }
+                            Button(
+                                onClick = onBuild,
+                                enabled = state.plannedNames > 0 && (state.labelZh.isNotBlank() || state.labelEn.isNotBlank()),
+                                modifier = Modifier.weight(1f).height(52.dp),
+                                shape = MaterialTheme.shapes.large,
+                            ) {
+                                Text(
+                                    if (state.hasFileAccess) stringResource(R.string.build_into, File(state.outputDir).name)
+                                    else stringResource(R.string.build_zmtp),
+                                )
+                            }
                         }
                     }
                 }

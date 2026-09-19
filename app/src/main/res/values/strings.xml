@@ -144,7 +144,7 @@
     <string name="icon_contrast">Tone curve</string>
     <string name="icon_contrast_detail">Evens out how light or dark the selected icons look once tinted. Tap to add a point, drag a point to move it, long-press to remove it. Applied before the icon tint.</string>
     <string name="normalize">Normalize</string>
-    <string name="normalize_detail">Shifts each selected icon by its own amount so they share the same average brightness, instead of one curve applied identically to all of them.</string>
+    <string name="normalize_detail">Shifts each selected icon by its own amount so they share the same average brightness, instead of one curve applied identically to all of them. It measures them as they look right now, so any curve you have already drawn is kept and moved, not discarded.</string>
     <string name="reset">Reset</string>
     <string name="icon_pack_caps">ICON PACK</string>
     <string name="miui_theme_caps">MIUI THEME</string>
@@ -243,4 +243,14 @@
     <string name="cannot_decode_appfilter">Cannot decode the binary appfilter.xml.</string>
     <string name="empty_appfilter">appfilter.xml has no icon entries.</string>
     <string name="no_raster_icons">No PNG, WebP or JPEG icons resolved. Vector-only icon packs are not supported.</string>
+    <string name="saved_tweaks">Saved tweaks</string>
+    <string name="saved_tweaks_detail">Every import you built or saved, with its shape, tint, blend mode and per-icon curves. Tap one to keep editing it; long-press for more.</string>
+    <string name="save_tweaks">Save tweaks</string>
+    <string name="project_saved">Saved \u201c%1$s\u201d</string>
+    <string name="project_remove">Remove</string>
+    <string name="project_build">Build</string>
+    <string name="project_edit">Edit</string>
+    <string name="project_remove_title">Remove \u201c%1$s\u201d?</string>
+    <string name="project_remove_detail">This only deletes the saved tweaks. The icon pack or theme it was made from, and any theme already built, are left alone.</string>
+    <string name="project_source_missing">Can\'t find the source this was made from (%1$s). It may have been moved, deleted or uninstalled \u2014 import it again to carry on from these tweaks.</string>
 </resources>

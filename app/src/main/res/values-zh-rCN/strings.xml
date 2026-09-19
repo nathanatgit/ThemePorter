@@ -140,7 +140,7 @@
     <string name="icon_contrast">色调曲线</string>
     <string name="icon_contrast_detail">让所选图标在着色后的明暗观感更一致，效果作用于着色之前。点击空白处添加控制点，拖动控制点调整，长按可删除。</string>
     <string name="normalize">对齐明暗</string>
-    <string name="normalize_detail">按各自所需的幅度分别偏移每个所选图标，使其平均明暗一致，而不是对所有图标套用同一条曲线。</string>
+    <string name="normalize_detail">按各自所需的幅度分别偏移每个所选图标，使其平均明暗一致，而不是对所有图标套用同一条曲线。以当前实际效果为准进行测量，因此已经调好的曲线会被保留并整体平移，而不会被丢弃。</string>
     <string name="reset">重置</string>
     <string name="icon_pack_caps">图标包</string>
     <string name="miui_theme_caps">MIUI 主题</string>
@@ -236,4 +236,14 @@
     <string name="cannot_decode_appfilter">无法解析二进制 appfilter.xml。</string>
     <string name="empty_appfilter">appfilter.xml 中没有图标条目。</string>
     <string name="no_raster_icons">未解析到 PNG、WebP 或 JPEG 图标。暂不支持只有矢量图的图标包。</string>
+    <string name="saved_tweaks">\u5df2\u4fdd\u5b58\u7684\u8c03\u6574</string>
+    <string name="saved_tweaks_detail">\u6bcf\u4e2a\u6784\u5efa\u8fc7\u6216\u4fdd\u5b58\u8fc7\u7684\u5bfc\u5165\uff0c\u5305\u542b\u5f62\u72b6\u3001\u8272\u8c03\u3001\u6df7\u5408\u6a21\u5f0f\u548c\u5355\u4e2a\u56fe\u6807\u7684\u66f2\u7ebf\u3002\u70b9\u51fb\u7ee7\u7eed\u7f16\u8f91\uff0c\u957f\u6309\u67e5\u770b\u66f4\u591a\u3002</string>
+    <string name="save_tweaks">\u4fdd\u5b58\u8c03\u6574</string>
+    <string name="project_saved">\u5df2\u4fdd\u5b58\u201c%1$s\u201d</string>
+    <string name="project_remove">\u79fb\u9664</string>
+    <string name="project_build">\u6784\u5efa</string>
+    <string name="project_edit">\u7f16\u8f91</string>
+    <string name="project_remove_title">\u79fb\u9664\u201c%1$s\u201d\uff1f</string>
+    <string name="project_remove_detail">\u4ec5\u5220\u9664\u4fdd\u5b58\u7684\u8c03\u6574\u3002\u539f\u56fe\u6807\u5305\u6216\u4e3b\u9898\u6587\u4ef6\uff0c\u4ee5\u53ca\u5df2\u7ecf\u6784\u5efa\u597d\u7684\u4e3b\u9898\uff0c\u90fd\u4e0d\u4f1a\u53d7\u5f71\u54cd\u3002</string>
+    <string name="project_source_missing">\u627e\u4e0d\u5230\u5236\u4f5c\u5b83\u7684\u6765\u6e90\uff08%1$s\uff09\u3002\u5b83\u53ef\u80fd\u5df2\u88ab\u79fb\u52a8\u3001\u5220\u9664\u6216\u5378\u8f7d \u2014 \u8bf7\u91cd\u65b0\u5bfc\u5165\u4ee5\u7ee7\u7eed\u4f7f\u7528\u8fd9\u4e9b\u8c03\u6574\u3002</string>
 </resources>

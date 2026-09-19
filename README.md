@@ -50,7 +50,7 @@ The result is a `.zmtp` file you apply from the phone's built-in **Themes** app,
 Icon packs are rarely internally consistent — some glyphs come in bright, some almost black, and a single tint color lands differently on each. Two controls fix that together:
 
 - **Blend mode** sets the character of the recolor across the whole theme. Multiply is the safe default; Soft Light keeps more of the source's own shading; Lighten rescues packs whose artwork is too dark to read once tinted.
-- **The tone curve** corrects the icons that still don't match. Select them in the manual-replacement grid, then drag the curve over their combined histogram, or tap **Normalize** to pull them all to the same average brightness in one step.
+- **The tone curve** corrects the icons that still don't match. Select them in the manual-replacement grid, then drag the curve over their combined histogram, or tap **Normalize** to pull them all to the same average brightness in one step. Normalize shifts the curve you drew rather than replacing it, so the two can be used in either order.
 
 Blend mode is the global look; the curve is the per-icon correction that makes everything land on it.
 
@@ -59,6 +59,14 @@ Blend mode is the global look; the curve is the per-icon correction that makes e
 <img src="docs/screenshots/saved.jpg" alt="Done screen: theme saved, with a button to open the Themes app" width="320">
 
 Tap **Build into…**, then open the **Themes** app and apply it from there like any other theme.
+
+## Coming back to a theme
+
+Building a theme also saves everything you decided about it, as a card in the **Saved tweaks** gallery on the home screen: the names, the shape and composition, the tint and blend mode, every per-icon curve and manual assignment, the wallpaper choice and the output name. **Save tweaks** on the configure screen parks a set you haven't built yet.
+
+Tap a card to carry on editing it; long-press for **Edit**, **Build** and **Remove**.
+
+The icon pack or `.mtz` itself is not copied into the saved set — it runs to tens of megabytes, so the set points at the file instead. If you later move, delete or uninstall it, the app says so and asks you to import it again; the tweaks are still there to carry on from. Removing a saved set leaves the source and any theme already built from it alone.
 
 ## Good to know
 
