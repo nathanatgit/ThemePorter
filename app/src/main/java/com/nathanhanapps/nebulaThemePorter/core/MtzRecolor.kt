@@ -80,6 +80,29 @@ object MtzRecolor {
         return installed.filter { stem.startsWith("$it.") }.maxByOrNull { it.length }
     }
 
+    /**
+     * Which of this phone's apps each of the theme's icons themes, as package to icon id. An icon named
+     * exactly for a package wins over one named for one of its activities, so the drawable MIUI reads for the
+     * app in general is the one shown for it, not whichever alias happened to be listed first.
+     *
+     * [icons] is (drawable name, caller's id for it) - the id is opaque here, so this works equally for a
+     * [SourceIcon.id] in the UI and for an archive entry name in the builder.
+     */
+    fun coverage(icons: List<Pair<String, String>>, installed: Set<String>): Map<String, String> {
+        val covered = LinkedHashMap<String, String>()
+        val exact = HashSet<String>()
+        icons.forEach { (name, id) ->
+            val packageName = packageFor(name, installed) ?: return@forEach
+            if (name == packageName) {
+                covered[packageName] = id
+                exact += packageName
+            } else if (packageName !in exact) {
+                covered.putIfAbsent(packageName, id)
+            }
+        }
+        return covered
+    }
+
     /** Installed apps the theme has no icon for at all - the ones a recolor can generate one for. */
     fun missingPackages(stems: Collection<String>, installed: Collection<String>): List<String> {
         val installedSet = installed.toSet()

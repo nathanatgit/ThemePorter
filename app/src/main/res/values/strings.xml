@@ -266,6 +266,9 @@
     <string name="recolor_summary">%1$d icons · %2$d apps without one</string>
     <string name="recolor_fill_missing">Add icons for apps the theme skips</string>
     <string name="recolor_fill_missing_detail">Draws one from the app\'s own icon on this theme\'s plate and mask, so it matches the rest instead of staying in its own colors. %1$d apps on this phone need one.</string>
+    <string name="recolor_apps">Apps on this phone</string>
+    <string name="recolor_apps_detail">Every app your launcher shows, with the icon it will have once this theme is recolored. The %2$d marked with a dot are ones the theme has nothing for, drawn from the app\'s own icon. (%1$d apps)</string>
+    <string name="recolor_apps_loading">Reading the apps on this phone…</string>
     <string name="recolor_own_background">Keep those apps\' own backgrounds</string>
     <string name="recolor_own_background_detail">Off by default: a generated icon sits on this theme\'s own plate, so keeping the app\'s backdrop as well leaves it a dark tile among icons that have all turned one colour. Turn it on for glyphs that are unreadable without it.</string>
     <string name="recolor_installed_only_detail">Leaves out icons for apps that aren\'t installed here. Makes the theme smaller, but also useless to anyone else.</string>

@@ -979,6 +979,24 @@ private fun ConfigureScreen(
                 }
             }
             item {
+                SectionHeader(
+                    stringResource(R.string.recolor_apps),
+                    if (state.recolorAppsLoading || !state.recolorAppsLoaded) {
+                        stringResource(R.string.recolor_apps_loading)
+                    } else {
+                        stringResource(R.string.recolor_apps_detail, state.recolorApps.size, state.recolorMissing)
+                    },
+                )
+            }
+            items(
+                state.recolorApps.chunked(AppGridColumns),
+                key = { row -> row.joinToString(",") { "recolor:${it.packageName}" } },
+            ) { row ->
+                AppGridRow(row.size) {
+                    row.forEach { entry -> RecolorAppGridCell(entry, options, viewModel) }
+                }
+            }
+            item {
                 Section(stringResource(R.string.fixed_icon_shape)) {
                     FixedShapePicker(options.fixedShape, viewModel::setFixedShape, state.fixedBackgroundName, onPickFixedBackground, viewModel::clearFixedBackground)
                     Hint(stringResource(R.string.fixed_shape_section_detail))
@@ -2268,6 +2286,7 @@ private fun RecolorScreen(
     val options = state.options
     val previewIcons = remember(summary) { viewModel.fixedPreviewIconChoices() }
     val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(summary) { viewModel.loadRecolorApps() }
     LaunchedEffect(state.error) {
         state.error?.let {
             snackbar.showSnackbar(it)
@@ -2406,6 +2425,68 @@ private fun RecolorScreen(
                 }
             }
         }
+    }
+}
+
+/**
+ * One app in the recolor grid, rendered the way the export will render it - a themed icon through the tint,
+ * a skipped one through the theme's own mask and plate - rather than as a generic tinted glyph, so what the
+ * grid shows is what lands in the archive.
+ */
+@Composable
+private fun RowScope.RecolorAppGridCell(
+    entry: RecolorApp,
+    options: BuildOptions,
+    viewModel: PorterViewModel,
+) {
+    val bitmap by produceState<ImageBitmap?>(
+        initialValue = null,
+        entry.imageId,
+        options.fixedTintColor,
+        options.fixedTintStrength,
+        options.fixedTintBlendMode,
+        options.fixedShape,
+        options.fixedComposition,
+        options.generatedIconOwnBackground,
+    ) {
+        // Same settle as [Thumbnail]: a slider drag re-keys every visible cell at once.
+        if (value != null) delay(90)
+        value = viewModel.recolorThumbnail(entry, options)?.asImageBitmap()
+    }
+    Column(
+        modifier = Modifier.weight(1f).padding(vertical = 8.dp, horizontal = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center,
+            ) {
+                bitmap?.let {
+                    Image(it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                }
+            }
+            if (entry.generated) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .size(10.dp)
+                        .background(MaterialTheme.colorScheme.tertiary, CircleShape)
+                        .border(1.dp, MaterialTheme.colorScheme.background, CircleShape),
+                )
+            }
+        }
+        Text(
+            entry.label,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 

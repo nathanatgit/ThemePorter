@@ -84,6 +84,35 @@ class MtzRecolorTest {
     }
 
     @Test
+    fun coverageResolvesEachIconToTheAppItThemes() {
+        val installed = setOf("com.android.contacts", "com.tencent.mm", "com.example.notes")
+        val icons = listOf(
+            "com.tencent.mm" to "i:mm.png",
+            "com.android.contacts.activities.TwelveKeyDialer" to "i:dialer.png",
+            "icon_pattern" to "i:pattern.png",
+            "com.notinstalled.app" to "i:absent.png",
+        )
+
+        val covered = MtzRecolor.coverage(icons, installed)
+
+        assertEquals(mapOf("com.tencent.mm" to "i:mm.png", "com.android.contacts" to "i:dialer.png"), covered)
+    }
+
+    /** Whichever order the archive lists them in, the package's own drawable is the one shown for the app. */
+    @Test
+    fun anIconNamedForThePackageBeatsOneNamedForAnActivity() {
+        val installed = setOf("com.android.contacts")
+        val aliasFirst = listOf(
+            "com.android.contacts.activities.TwelveKeyDialer" to "i:dialer.png",
+            "com.android.contacts" to "i:contacts.png",
+        )
+        val packageFirst = aliasFirst.reversed()
+
+        assertEquals("i:contacts.png", MtzRecolor.coverage(aliasFirst, installed)["com.android.contacts"])
+        assertEquals("i:contacts.png", MtzRecolor.coverage(packageFirst, installed)["com.android.contacts"])
+    }
+
+    @Test
     fun missingPackagesAreTheInstalledAppsNoStemAccountsFor() {
         val stems = listOf("com.tencent.mm", "com.android.contacts.activities.TwelveKeyDialer", "icon_pattern")
         val installed = listOf("com.tencent.mm", "com.android.contacts", "com.example.notes", "com.example.maps")

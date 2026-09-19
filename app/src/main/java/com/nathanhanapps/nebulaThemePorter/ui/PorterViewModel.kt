@@ -42,6 +42,7 @@ import com.nathanhanapps.nebulaThemePorter.render.Bitmaps
 import com.nathanhanapps.nebulaThemePorter.render.DynamicIcons
 import com.nathanhanapps.nebulaThemePorter.render.PreviewRenderer
 import com.nathanhanapps.nebulaThemePorter.render.FixedIconArt
+import com.nathanhanapps.nebulaThemePorter.render.MiuiIconArt
 import com.nathanhanapps.nebulaThemePorter.render.Shapes
 import com.nathanhanapps.nebulaThemePorter.source.IconPackSource
 import com.nathanhanapps.nebulaThemePorter.source.InstalledApps
@@ -85,6 +86,15 @@ data class SourceSummary(
     val hasIconBack: Boolean,
 )
 
+/** One launcher-visible app and the artwork a recolor would give it. */
+data class RecolorApp(
+    val packageName: String,
+    val label: String,
+    /** The theme's own icon for this app, or a [DeviceIconId] when the recolor has to draw one. */
+    val imageId: String,
+    val generated: Boolean,
+)
+
 data class PorterState(
     val stage: Stage = Stage.HOME,
     val installedIconPacks: List<InstalledApps.IconPack> = emptyList(),
@@ -126,6 +136,10 @@ data class PorterState(
     val recolorMode: Boolean = false,
     /** Installed apps the opened theme has no icon for at all, which a recolor can draw one for. */
     val recolorMissing: Int = 0,
+    /** Every launcher-visible app, with the icon the recolor would give it. */
+    val recolorApps: List<RecolorApp> = emptyList(),
+    val recolorAppsLoading: Boolean = false,
+    val recolorAppsLoaded: Boolean = false,
     val progress: BuildProgress? = null,
     val result: BuildSummary? = null,
     val recolorResult: RecolorSummary? = null,
@@ -676,6 +690,112 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
                 mutableState.update { it.copy(stage = Stage.RECOLOR, progress = null, error = error.userMessage()) }
             }
         }
+    }
+
+    /**
+     * Every launcher-visible app on this phone, paired with the artwork a recolor would give it: the theme's
+     * own icon where it has one, and otherwise the app's own, which the recolor draws onto the theme's plate.
+     * Keyed by package rather than by activity because that is how a MIUI theme names its drawables - one
+     * file per package, whichever of its activities the launcher shows.
+     */
+    fun loadRecolorApps() {
+        val current = mutableState.value
+        if (current.recolorAppsLoading || current.recolorAppsLoaded) return
+        val active = source ?: return
+        mutableState.update { it.copy(recolorAppsLoading = true) }
+        viewModelScope.launch {
+            runCatching {
+                val launcherApps = withContext(Dispatchers.IO) {
+                    InstalledApps.launcherApps(app)
+                        .distinctBy { it.packageName }
+                        .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.label })
+                }
+                val installed = launcherApps.mapTo(HashSet()) { it.packageName }
+                // An icon named for one of a package's activities themes that package too, so every drawable
+                // name is resolved back to the app it covers before asking which apps are left over.
+                val covered = MtzRecolor.coverage(active.icons.map { it.key to it.id }, installed)
+                launcherApps.map { launcher ->
+                    val themed = covered[launcher.packageName]
+                    RecolorApp(
+                        packageName = launcher.packageName,
+                        label = launcher.label,
+                        imageId = themed ?: DeviceIconId.of(launcher.packageName, null),
+                        generated = themed == null,
+                    )
+                }
+            }.onSuccess { apps ->
+                mutableState.update {
+                    it.copy(
+                        recolorApps = apps,
+                        recolorAppsLoading = false,
+                        recolorAppsLoaded = true,
+                        recolorMissing = apps.count(RecolorApp::generated),
+                    )
+                }
+            }.onFailure { error ->
+                mutableState.update { it.copy(recolorAppsLoading = false, error = error.userMessage()) }
+            }
+        }
+    }
+
+    private var recolorAssetsFor: ThemeSource? = null
+    private var recolorAssets: Triple<Bitmap?, Bitmap?, Bitmap?>? = null
+    private val recolorAssetsLock = Mutex()
+
+    /** The theme's own mask, plate and border at preview size, decoded once per loaded theme and untinted. */
+    private suspend fun recolorAssets(): Triple<Bitmap?, Bitmap?, Bitmap?> {
+        val active = source ?: return Triple(null, null, null)
+        recolorAssets?.takeIf { recolorAssetsFor === active }?.let { return it }
+        return recolorAssetsLock.withLock {
+            recolorAssets?.takeIf { recolorAssetsFor === active } ?: withContext(Dispatchers.IO) {
+                fun decode(id: String?) = id?.let { runCatching { active.decode(it, NebulaSpec.PREVIEW_ICON_SIZE) }.getOrNull() }
+                Triple(decode(active.extras.iconMask), decode(active.extras.iconBack), decode(active.extras.iconUpon))
+            }.also {
+                recolorAssetsFor = active
+                recolorAssets = it
+            }
+        }
+    }
+
+    /**
+     * What one app will look like in the recolored theme. An app the theme already covers goes through the
+     * same [thumbnail] path as everything else; one it doesn't is composed exactly as
+     * [MtzRecolorBuilder] would compose it, so the grid shows the icon that is actually written rather than a
+     * plain tinted glyph.
+     */
+    suspend fun recolorThumbnail(entry: RecolorApp, options: BuildOptions): Bitmap? {
+        val tint = options.fixedTintColor?.toInt()
+        if (!entry.generated || !options.fixedShape.isOriginal) {
+            return thumbnail(
+                entry.imageId, tint, options.fixedTintStrength, GrayscaleCurve(),
+                options.takeUnless { it.fixedShape.isOriginal }, options.generatedIconOwnBackground, options.fixedTintBlendMode,
+            )
+        }
+        val cacheKey = "miui:${entry.imageId}|bg:${options.generatedIconOwnBackground}|tint:$tint:${options.fixedTintStrength}:${options.fixedTintBlendMode}"
+        synchronized(thumbnails) { thumbnails.get(cacheKey) }?.let { return it }
+        val glyph = withContext(Dispatchers.IO) {
+            runCatching {
+                InstalledApps.decodeIcon(app, entry.imageId, NebulaSpec.PREVIEW_ICON_SIZE * 2, options.generatedIconOwnBackground)
+            }.getOrNull()
+        } ?: return null
+        val (mask, plate, border) = recolorAssets()
+        val scale = (source as? MtzSource)?.iconScale ?: 1f
+        val rendered = withContext(Dispatchers.Default) {
+            // The cached plate and border are untinted, so tint copies for this render and drop them after:
+            // they are shared with every other cell, which may be showing a different colour by then.
+            val tintedPlate = plate?.let { source -> tint?.let { Bitmaps.tint(source, it, options.fixedTintStrength, options.fixedTintBlendMode) } }
+            val tintedBorder = border?.let { source -> tint?.let { Bitmaps.tint(source, it, options.fixedTintStrength, options.fixedTintBlendMode) } }
+            MiuiIconArt.render(
+                glyph, NebulaSpec.PREVIEW_ICON_SIZE, mask, tintedPlate ?: plate, tintedBorder ?: border, scale,
+                tint, options.fixedTintStrength, options.fixedTintBlendMode,
+            ).also {
+                tintedPlate?.recycle()
+                tintedBorder?.recycle()
+            }
+        }
+        glyph.recycle()
+        synchronized(thumbnails) { thumbnails.put(cacheKey, rendered) }
+        return rendered
     }
 
     fun back() {
