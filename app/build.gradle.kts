@@ -11,8 +11,8 @@ android {
         applicationId = "com.nathanhanapps.nebulaThemePorter"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.2.0"
+        versionCode = 4
+        versionName = "1.3.0"
 
         // Nubia/ZTE devices are all arm64; skip bundling other ABIs' native libs.
         ndk {
@@ -90,6 +90,8 @@ dependencies {
     implementation("net.dongliu:apk-parser:2.6.10")
 
     testImplementation("junit:junit:4.13.2")
+    // ProjectStore serializes with org.json, which android.jar only stubs in unit tests.
+    testImplementation("org.json:json:20250107")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
