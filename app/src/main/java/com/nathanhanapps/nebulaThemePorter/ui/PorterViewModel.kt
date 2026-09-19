@@ -17,12 +17,15 @@ import androidx.lifecycle.viewModelScope
 import com.nathanhanapps.nebulaThemePorter.CrashLog
 import com.nathanhanapps.nebulaThemePorter.build.BuildProgress
 import com.nathanhanapps.nebulaThemePorter.build.BuildSummary
+import com.nathanhanapps.nebulaThemePorter.build.MtzRecolorBuilder
+import com.nathanhanapps.nebulaThemePorter.build.RecolorSummary
 import com.nathanhanapps.nebulaThemePorter.build.ThemeBuilder
 import com.nathanhanapps.nebulaThemePorter.core.BuildOptions
 import com.nathanhanapps.nebulaThemePorter.core.AppComponent
 import com.nathanhanapps.nebulaThemePorter.core.DeviceIconId
 import com.nathanhanapps.nebulaThemePorter.core.IconPlan
 import com.nathanhanapps.nebulaThemePorter.core.IconPlanner
+import com.nathanhanapps.nebulaThemePorter.core.MtzRecolor
 import com.nathanhanapps.nebulaThemePorter.core.FixedIconShape
 import com.nathanhanapps.nebulaThemePorter.core.FixedIconComposition
 import com.nathanhanapps.nebulaThemePorter.core.GradientMix
@@ -68,7 +71,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-enum class Stage { HOME, LOADING, CONFIGURE, BUILDING, DONE, ERROR }
+enum class Stage { HOME, LOADING, CONFIGURE, RECOLOR, BUILDING, DONE, ERROR }
 
 data class SourceSummary(
     val kind: SourceKind,
@@ -119,8 +122,13 @@ data class PorterState(
     val wallpaperRevision: Int = 0,
     val plannedImages: Int = 0,
     val plannedNames: Int = 0,
+    /** Recoloring a MIUI theme back into a .mtz, rather than porting a source into a .zmtp. */
+    val recolorMode: Boolean = false,
+    /** Installed apps the opened theme has no icon for at all, which a recolor can draw one for. */
+    val recolorMissing: Int = 0,
     val progress: BuildProgress? = null,
     val result: BuildSummary? = null,
+    val recolorResult: RecolorSummary? = null,
     val error: String? = null,
     val hasFileAccess: Boolean = false,
     val outputDir: String = "",
@@ -166,6 +174,9 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
 
     private var source: ThemeSource? = null
     private var planner: IconPlanner? = null
+
+    /** Package to launcher activities, kept from the last load: what a recolor filters and fills against. */
+    private var installedLaunchers: Map<String, List<String>> = emptyMap()
     private var wallpaperFile: File? = null
     private var fixedBackgroundFile: File? = null
     private var outputNameEdited = false
@@ -209,6 +220,23 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
             kind == SourceKind.ICON_PACK -> IconPackSource.open(app, uri)
             else -> MtzSource.open(app, uri)
         }
+    }
+
+    /**
+     * Opens a .mtz to recolor rather than to port. The same read as [open]: what differs is only what happens
+     * to it afterwards, so a theme can be tinted and written back as a .mtz for MIUI/HyperOS phones.
+     */
+    fun openMtzToRecolor(uri: Uri) = load(
+        sourceRef = ProjectSource(
+            kind = SourceKind.MTZ,
+            path = StorageAccess.fileFor(app, uri)?.absolutePath,
+            uri = uri.takeIf { StorageAccess.fileFor(app, it) == null }?.also(::persistRead)?.toString(),
+            fileName = SourceFiles.displayName(app, uri) ?: uri.lastPathSegment.orEmpty(),
+        ),
+        recolor = true,
+    ) {
+        val file = StorageAccess.fileFor(app, uri)
+        if (file != null) MtzSource.open(app, file) else MtzSource.open(app, uri)
     }
 
     fun loadInstalledIconPacks() {
@@ -579,9 +607,82 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
+    /** Writes the recolored theme straight into the chosen folder, as [buildToFolder] does for a port. */
+    fun recolorToFolder() {
+        val current = mutableState.value
+        val dir = File(current.outputDir)
+        val name = normalizedOutputName(current.outputName)
+        val part = File(dir, "$name.part")
+        startRecolor(
+            prepare = { require(dir.isDirectory || dir.mkdirs()) { app.getString(R.string.cannot_create_path, StorageAccess.friendlyPath(dir.absolutePath)) } },
+            openOutput = { part.outputStream() },
+            finish = {
+                val target = File(dir, name)
+                if (target.exists()) require(target.delete()) { app.getString(R.string.cannot_replace_file, target.name) }
+                require(part.renameTo(target)) { app.getString(R.string.cannot_rename_file, part.name) }
+                target.absolutePath
+            },
+            cleanup = { part.delete() },
+        )
+    }
+
+    /** Writes the recolored theme to a document chosen with the system picker. */
+    fun recolorTo(destination: Uri) {
+        startRecolor(
+            prepare = {},
+            openOutput = {
+                runCatching { app.contentResolver.openOutputStream(destination, "wt") }.getOrNull()
+                    ?: app.contentResolver.openOutputStream(destination, "w")
+                    ?: throw IllegalStateException(app.getString(R.string.cannot_open_output))
+            },
+            finish = { SourceFiles.displayName(app, destination) ?: destination.toString() },
+            cleanup = {},
+        )
+    }
+
+    /**
+     * The recolor counterpart of [startBuild]. It needs no icon plan: a recolor writes the theme's own icons
+     * back under their own names, so nothing has to be mapped onto ZTE file names first.
+     */
+    private fun startRecolor(
+        prepare: () -> Unit,
+        openOutput: () -> OutputStream,
+        finish: () -> String,
+        cleanup: () -> Unit,
+    ) {
+        val activeSource = source as? MtzSource ?: return
+        val options = mutableState.value.options
+        buildJob?.cancel()
+        mutableState.update {
+            it.copy(stage = Stage.BUILDING, progress = BuildProgress(0, 1, app.getString(R.string.progress_planning)), error = null, outputPath = null)
+        }
+        buildJob = viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { prepare() }
+                val summary = MtzRecolorBuilder(app).recolor(
+                    activeSource,
+                    options,
+                    installedLaunchers.keys,
+                    openOutput,
+                ) { progress ->
+                    mutableState.update { it.copy(progress = progress) }
+                }
+                summary to withContext(Dispatchers.IO) { finish() }
+            }.onSuccess { (summary, path) ->
+                mutableState.update { it.copy(stage = Stage.DONE, recolorResult = summary, progress = null, outputPath = path) }
+            }.onFailure { error ->
+                runCatching { cleanup() }
+                if (error is CancellationException) throw error
+                mutableState.update { it.copy(stage = Stage.RECOLOR, progress = null, error = error.userMessage()) }
+            }
+        }
+    }
+
     fun back() {
         when (mutableState.value.stage) {
-            Stage.DONE -> mutableState.update { it.copy(stage = Stage.CONFIGURE, result = null) }
+            Stage.DONE -> mutableState.update {
+                it.copy(stage = if (it.recolorMode) Stage.RECOLOR else Stage.CONFIGURE, result = null, recolorResult = null)
+            }
             Stage.BUILDING, Stage.LOADING -> Unit
             else -> reset()
         }
@@ -835,7 +936,7 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
      * over the freshly read source once it has loaded, which is what makes reopening a project cheap - the pack
      * is re-read from disk, but nothing the user decided about it has to be redone.
      */
-    private fun load(sourceRef: ProjectSource?, restore: SavedProject? = null, opener: suspend () -> ThemeSource) {
+    private fun load(sourceRef: ProjectSource?, restore: SavedProject? = null, recolor: Boolean = false, opener: suspend () -> ThemeSource) {
         closeSource()
         wallpaperFile?.delete()
         wallpaperFile = null
@@ -854,6 +955,7 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
             }.onSuccess { (opened, newPlanner, installed) ->
                 source = opened
                 planner = newPlanner
+                installedLaunchers = installed
                 outputNameEdited = false
                 val packages = opened.icons.map { it.component?.packageName ?: it.key }.toSet()
                 val visiblePackageStems = installed.keys.mapTo(HashSet(), AppComponent::sanitize)
@@ -862,7 +964,9 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 val visibleIds = visibleSystemApps.mapTo(HashSet(), ZteSystemApp::id)
                 mutableState.value = base.copy(
-                    stage = Stage.CONFIGURE,
+                    stage = if (recolor) Stage.RECOLOR else Stage.CONFIGURE,
+                    recolorMode = recolor,
+                    recolorMissing = if (recolor) MtzRecolor.missingPackages(opened.icons.map { it.key }, installed.keys).size else 0,
                     summary = SourceSummary(
                         kind = opened.kind,
                         fileName = opened.fileName,
@@ -882,7 +986,7 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
                     visibleSystemApps = visibleSystemApps,
                     sourceWallpapers = opened.extras.wallpapers,
                     selectedWallpaperId = opened.extras.wallpaper,
-                    outputName = defaultOutputName(opened.suggestedLabel),
+                    outputName = if (recolor) MtzRecolor.outputName(opened.fileName) else defaultOutputName(opened.suggestedLabel),
                 )
                 if (restore == null) {
                     // A fresh gradient palette each time a source loads, so the generated wallpaper isn't the
@@ -1125,9 +1229,11 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
         return "$base.zmtp"
     }
 
+    /** A recolor stays a MIUI theme, so it keeps the .mtz extension the Themes app there looks for. */
     private fun normalizedOutputName(raw: String): String {
+        val extension = if (mutableState.value.recolorMode) ".mtz" else ".zmtp"
         val cleaned = raw.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().ifBlank { "Nebula theme" }
-        return if (cleaned.endsWith(".zmtp", ignoreCase = true)) cleaned else "$cleaned.zmtp"
+        return if (cleaned.endsWith(extension, ignoreCase = true)) cleaned else "$cleaned$extension"
     }
 
     private fun updateOptions(transform: (BuildOptions) -> BuildOptions) {

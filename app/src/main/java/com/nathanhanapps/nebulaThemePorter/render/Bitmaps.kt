@@ -171,6 +171,20 @@ object Bitmaps {
         return out
     }
 
+    /**
+     * Keeps only the part of [src] that [mask] is opaque at, scaling both to size. MIUI cuts an app's own icon
+     * with the theme's icon_mask.png this way before drawing it on icon_pattern.png, so an icon generated for an
+     * app the theme skipped is assembled the same way instead of landing in the grid as a bare square.
+     */
+    fun maskedBy(src: Bitmap, mask: Bitmap, size: Int): Bitmap {
+        val out = fit(src, size)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+            xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+        }
+        Canvas(out).drawBitmap(mask, null, RectF(0f, 0f, size.toFloat(), size.toFloat()), paint)
+        return out
+    }
+
     /** Center-crops [src] to fill width x height. */
     fun cover(src: Bitmap, width: Int, height: Int): Bitmap {
         val out = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)

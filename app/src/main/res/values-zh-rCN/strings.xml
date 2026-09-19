@@ -246,4 +246,30 @@
     <string name="project_remove_title">\u79fb\u9664\u201c%1$s\u201d\uff1f</string>
     <string name="project_remove_detail">\u4ec5\u5220\u9664\u4fdd\u5b58\u7684\u8c03\u6574\u3002\u539f\u56fe\u6807\u5305\u6216\u4e3b\u9898\u6587\u4ef6\uff0c\u4ee5\u53ca\u5df2\u7ecf\u6784\u5efa\u597d\u7684\u4e3b\u9898\uff0c\u90fd\u4e0d\u4f1a\u53d7\u5f71\u54cd\u3002</string>
     <string name="project_source_missing">\u627e\u4e0d\u5230\u5236\u4f5c\u5b83\u7684\u6765\u6e90\uff08%1$s\uff09\u3002\u5b83\u53ef\u80fd\u5df2\u88ab\u79fb\u52a8\u3001\u5220\u9664\u6216\u5378\u8f7d \u2014 \u8bf7\u91cd\u65b0\u5bfc\u5165\u4ee5\u7ee7\u7eed\u4f7f\u7528\u8fd9\u4e9b\u8c03\u6574\u3002</string>
+    <!-- 修改小米主题 -->
+    <string name="port_theme">移植主题</string>
+    <string name="port_theme_detail">把图标包或小米主题转换为星云主题（.zmtp）</string>
+    <string name="modify_theme">修改主题</string>
+    <string name="modify_theme_detail">为主题重新上色，并保存为原本的格式</string>
+    <string name="recolor_miui_subtitle">上色后另存为 .mtz</string>
+    <string name="recolor_miui_detail">仍是小米主题，只改变图标</string>
+    <string name="recolor_title">修改主题</string>
+    <string name="recolor_intro">只有主题中的图标会改变。其余组件、预览图、主题名称和壁纸都按原样写回，因此结果仍是小米主题商店可以安装的主题。</string>
+    <string name="recolor_previews_hint">主题自带的预览图不会被上色，主题应用中仍会显示原本的颜色。</string>
+    <string name="recolor_summary">%1$d 个图标 · %2$d 个应用没有图标</string>
+    <string name="recolor_fill_missing">为主题未收录的应用生成图标</string>
+    <string name="recolor_fill_missing_detail">以应用自身的图标为素材，套用本主题的底板和蒙版绘制，使其与其他图标一致，而不是保留原本的配色。本机有 %1$d 个应用需要。</string>
+    <string name="recolor_installed_only_detail">不写入本机未安装应用的图标。主题体积更小，但对其他人不再适用。</string>
+    <string name="recolor_shape_hint">会在主题原有图案之上烤制所选形状。保持“无”即可让每个图标维持原样。</string>
+    <string name="save_into">保存到 %1$s</string>
+    <string name="save_mtz">保存 .mtz</string>
+    <string name="recolor_result_summary">已上色 %1$d 个图标 · 新增 %2$d 个 · %3$s</string>
+    <string name="recolor_result_dropped">已略过 %1$d 个本机未安装应用的图标。</string>
+    <string name="recolor_saved">主题已修改</string>
+    <string name="apply_in_themes">请在小米/HyperOS 手机的主题应用中应用。</string>
+    <string name="adjust_and_resave">继续调整并重新保存</string>
+    <string name="mtz_has_no_icons">%1$s 中没有可上色的图标。这是图标主题吗？</string>
+    <string name="progress_recolor">图标 %1$d/%2$d</string>
+    <string name="progress_generate">新增图标 %1$d/%2$d</string>
+    <string name="progress_repacking">正在重新打包主题</string>
 </resources>

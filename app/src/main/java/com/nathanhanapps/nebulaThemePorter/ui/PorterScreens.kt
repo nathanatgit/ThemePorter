@@ -160,6 +160,9 @@ fun PorterApp(viewModel: PorterViewModel) {
     val openMtz = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { viewModel.open(SourceKind.MTZ, it) }
     }
+    val openMtzToRecolor = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { viewModel.openMtzToRecolor(it) }
+    }
     val pickWallpaper = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(viewModel::setWallpaper)
     }
@@ -168,6 +171,9 @@ fun PorterApp(viewModel: PorterViewModel) {
     }
     val saveTheme = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         uri?.let(viewModel::build)
+    }
+    val saveRecolored = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        uri?.let(viewModel::recolorTo)
     }
     val chooseOutputFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let(viewModel::setOutputFolder)
@@ -187,7 +193,7 @@ fun PorterApp(viewModel: PorterViewModel) {
         }
     }
 
-    BackHandler(enabled = state.stage in setOf(Stage.CONFIGURE, Stage.DONE, Stage.ERROR)) { viewModel.back() }
+    BackHandler(enabled = state.stage in setOf(Stage.CONFIGURE, Stage.RECOLOR, Stage.DONE, Stage.ERROR)) { viewModel.back() }
 
     when (state.stage) {
         Stage.HOME -> HomeScreen(
@@ -198,6 +204,7 @@ fun PorterApp(viewModel: PorterViewModel) {
             },
             onIconPackFile = { openIconPack.launch(arrayOf("application/vnd.android.package-archive", "application/octet-stream")) },
             onMtz = { openMtz.launch(arrayOf("*/*")) },
+            onRecolorMtz = { openMtzToRecolor.launch(arrayOf("*/*")) },
             onRequestAccess = requestFileAccess,
             onDismissCrash = viewModel::dismissCrash,
             onCopyCrash = { report ->
@@ -233,6 +240,16 @@ fun PorterApp(viewModel: PorterViewModel) {
             onBuild = startBuild,
             )
         }
+        Stage.RECOLOR -> RecolorScreen(
+            state = state,
+            viewModel = viewModel,
+            onChooseOutputFolder = { runCatching { chooseOutputFolder.launch(null) } },
+            onRequestAccess = requestFileAccess,
+            onSave = {
+                if (state.hasFileAccess) viewModel.recolorToFolder() else saveRecolored.launch(viewModel.suggestedFileName())
+                Unit
+            },
+        )
         Stage.BUILDING -> BusyScreen(state.progress?.label ?: stringResource(R.string.building), state.progress)
         Stage.DONE -> DoneScreen(state, onAdjust = viewModel::back, onHome = viewModel::reset, onOpenThemes = { openThemesApp(context) })
         Stage.ERROR -> ErrorScreen(state.error.orEmpty(), onHome = viewModel::reset)
@@ -337,6 +354,7 @@ private fun HomeScreen(
     onInstalledIconPack: () -> Unit,
     onIconPackFile: () -> Unit,
     onMtz: () -> Unit,
+    onRecolorMtz: () -> Unit,
     onRequestAccess: () -> Unit,
     onDismissCrash: () -> Unit,
     onCopyCrash: (String) -> Unit,
@@ -403,7 +421,7 @@ private fun HomeScreen(
                 }
             }
 
-            item { SectionHeader(stringResource(R.string.create_theme), stringResource(R.string.choose_source)) }
+            item { SectionHeader(stringResource(R.string.port_theme), stringResource(R.string.port_theme_detail)) }
             item {
                 SourceCard(
                     badge = "APP",
@@ -435,6 +453,20 @@ private fun HomeScreen(
                     containerColor = MaterialTheme.colorScheme.tertiaryContainer,
                     contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
                     onClick = onMtz,
+                )
+            }
+
+            // A theme that stays in its own format, rather than a source for a NebulaAIOS one.
+            item { SectionHeader(stringResource(R.string.modify_theme), stringResource(R.string.modify_theme_detail)) }
+            item {
+                SourceCard(
+                    badge = "MTZ",
+                    title = stringResource(R.string.miui_theme),
+                    subtitle = stringResource(R.string.recolor_miui_subtitle),
+                    detail = stringResource(R.string.recolor_miui_detail),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    onClick = onRecolorMtz,
                 )
             }
 
@@ -1374,6 +1406,9 @@ private fun FixedShapePicker(
     customBackgroundName: String?,
     onPickCustomBackground: () -> Unit,
     onClearCustomBackground: () -> Unit,
+    /** A recolor composites the theme's own icon_pattern and has nowhere to put a custom plate, so it hides
+     * the tile rather than offering one that would be ignored. */
+    allowCustomBackground: Boolean = true,
 ) {
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FixedIconShape.entries.forEach { shape ->
@@ -1417,25 +1452,27 @@ private fun FixedShapePicker(
             }
         }
         val customSelected = customBackgroundName != null
-        Surface(
-            onClick = onPickCustomBackground,
-            modifier = Modifier.widthIn(min = 76.dp),
-            shape = MaterialTheme.shapes.medium,
-            color = if (customSelected) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
-            contentColor = if (customSelected) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-            border = if (customSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.tertiary) else null,
-        ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
+        if (allowCustomBackground) {
+            Surface(
+                onClick = onPickCustomBackground,
+                modifier = Modifier.widthIn(min = 76.dp),
+                shape = MaterialTheme.shapes.medium,
+                color = if (customSelected) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                contentColor = if (customSelected) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                border = if (customSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.tertiary) else null,
             ) {
-                Text("PNG", modifier = Modifier.size(36.dp), textAlign = TextAlign.Center)
-                Spacer(Modifier.height(6.dp))
-                Text(stringResource(R.string.fixed_background_custom_grid), style = MaterialTheme.typography.labelSmall)
+                Column(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text("PNG", modifier = Modifier.size(36.dp), textAlign = TextAlign.Center)
+                    Spacer(Modifier.height(6.dp))
+                    Text(stringResource(R.string.fixed_background_custom_grid), style = MaterialTheme.typography.labelSmall)
+                }
             }
         }
     }
-    customBackgroundName?.let {
+    if (allowCustomBackground) customBackgroundName?.let {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(it, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             TextButton(onClick = onClearCustomBackground) { Text(stringResource(R.string.clear_background)) }
@@ -2203,11 +2240,162 @@ private fun IconPickerDialog(
     }
 }
 
+/**
+ * Recoloring a Xiaomi theme: the same tint the port flow bakes into a .zmtp, written back into the .mtz it came
+ * from. There is no icon plan, no theme metadata and no wallpaper here - none of them change - so this screen is
+ * only the controls that decide how an icon ends up looking, plus where to put the result.
+ */
+@Composable
+private fun RecolorScreen(
+    state: PorterState,
+    viewModel: PorterViewModel,
+    onChooseOutputFolder: () -> Unit,
+    onRequestAccess: () -> Unit,
+    onSave: () -> Unit,
+) {
+    val summary = state.summary ?: return
+    val options = state.options
+    val previewIcons = remember(summary) { viewModel.fixedPreviewIconChoices() }
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(state.error) {
+        state.error?.let {
+            snackbar.showSnackbar(it)
+            viewModel.consumeError()
+        }
+    }
+
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(stringResource(R.string.recolor_title), style = MaterialTheme.typography.titleLarge)
+                        Text(summary.fileName, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                },
+                navigationIcon = { TextButton(onClick = viewModel::reset) { Text(stringResource(R.string.close)) } },
+            )
+        },
+        bottomBar = {
+            Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 3.dp) {
+                Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)) {
+                    Text(
+                        stringResource(R.string.recolor_summary, summary.imageCount, state.recolorMissing),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Button(
+                        onClick = onSave,
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                        shape = MaterialTheme.shapes.large,
+                    ) {
+                        Text(
+                            if (state.hasFileAccess) stringResource(R.string.save_into, File(state.outputDir).name)
+                            else stringResource(R.string.save_mtz),
+                        )
+                    }
+                }
+            }
+        },
+        snackbarHost = { SnackbarHost(snackbar) },
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding).imePadding(),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            item { SummaryCard(summary) }
+            item {
+                Section(stringResource(R.string.fixed_icon_tint)) {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        previewIcons.forEach { id ->
+                            PreviewCell {
+                                Thumbnail(
+                                    id, 48, viewModel, options.fixedTintColor, options.fixedTintStrength,
+                                    fixedOptions = options.takeUnless { it.fixedShape.isOriginal },
+                                )
+                            }
+                        }
+                    }
+                    FixedTintPaletteControls(options, state.wallpaperPalette, viewModel)
+                    Hint(stringResource(R.string.recolor_intro))
+                    Hint(stringResource(R.string.recolor_previews_hint))
+                }
+            }
+            item {
+                Section(stringResource(R.string.fixed_icon_shape)) {
+                    FixedShapePicker(
+                        selected = options.fixedShape,
+                        onSelect = viewModel::setFixedShape,
+                        customBackgroundName = null,
+                        onPickCustomBackground = {},
+                        onClearCustomBackground = {},
+                        allowCustomBackground = false,
+                    )
+                    Hint(stringResource(R.string.recolor_shape_hint))
+                    if (!options.fixedShape.isOriginal) {
+                        ChoiceChips(
+                            listOf(
+                                FixedIconComposition.OVERLAY to stringResource(R.string.fixed_comp_overlay),
+                                FixedIconComposition.COVER to stringResource(R.string.fixed_comp_cover),
+                                FixedIconComposition.CLIP to stringResource(R.string.fixed_comp_clip),
+                            ),
+                            options.fixedComposition,
+                            viewModel::setFixedComposition,
+                        )
+                        FixedIconSizeControls(options, viewModel)
+                    }
+                }
+            }
+            item {
+                Section(stringResource(R.string.options)) {
+                    SwitchRow(
+                        title = stringResource(R.string.recolor_fill_missing),
+                        detail = stringResource(R.string.recolor_fill_missing_detail, state.recolorMissing),
+                        checked = options.generateMissingAppIcons,
+                        onChange = viewModel::setGenerateMissingAppIcons,
+                    )
+                    SwitchRow(
+                        title = stringResource(R.string.installed_apps_only),
+                        detail = stringResource(R.string.recolor_installed_only_detail),
+                        checked = options.onlyInstalledApps,
+                        onChange = viewModel::setOnlyInstalled,
+                    )
+                }
+            }
+            item {
+                Section(stringResource(R.string.output)) {
+                    OutlinedTextField(state.outputName, viewModel::setOutputName, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.file_name)) }, singleLine = true)
+                    if (state.hasFileAccess) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                StorageAccess.friendlyPath(state.outputDir),
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 2,
+                                overflow = TextOverflow.StartEllipsis,
+                            )
+                            TextButton(onClick = onChooseOutputFolder) { Text(stringResource(R.string.change_folder)) }
+                        }
+                        Hint(stringResource(R.string.replace_file_hint))
+                    } else {
+                        Hint(stringResource(R.string.choose_save_each_time))
+                        TextButton(onClick = onRequestAccess) { Text(stringResource(R.string.allow_all_files_access)) }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun DoneScreen(state: PorterState, onAdjust: () -> Unit, onHome: () -> Unit, onOpenThemes: () -> Unit) {
     val result = state.result
+    val recolored = state.recolorResult
     val context = LocalContext.current
-    val canOpenThemes = remember { themesAppIntent(context) != null }
+    val canOpenThemes = remember { themesAppIntent(context) != null } && !state.recolorMode
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
             modifier = Modifier.fillMaxSize().safeDrawingPadding().padding(20.dp),
@@ -2229,11 +2417,27 @@ private fun DoneScreen(state: PorterState, onAdjust: () -> Unit, onHome: () -> U
                     Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary) {
                         Text("✓", modifier = Modifier.padding(horizontal = 17.dp, vertical = 11.dp), style = MaterialTheme.typography.headlineMedium)
                     }
-                    Text(stringResource(R.string.theme_saved), style = MaterialTheme.typography.headlineMedium)
+                    Text(
+                        stringResource(if (state.recolorMode) R.string.recolor_saved else R.string.theme_saved),
+                        style = MaterialTheme.typography.headlineMedium,
+                    )
                     state.outputPath?.let {
                         Text(StorageAccess.friendlyPath(it), style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
                     }
-                    if (result != null) {
+                    if (recolored != null) {
+                        Text(
+                            stringResource(R.string.recolor_result_summary, recolored.recolored, recolored.generated, formatBytes(recolored.bytes)),
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center,
+                        )
+                        if (recolored.dropped > 0) {
+                            Text(
+                                stringResource(R.string.recolor_result_dropped, recolored.dropped),
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Center,
+                            )
+                        }
+                    } else if (result != null) {
                         Text(
                             stringResource(R.string.build_result_summary, result.sourceImages, result.fileNames, formatBytes(result.bytes)),
                             style = MaterialTheme.typography.bodyMedium,
@@ -2241,10 +2445,11 @@ private fun DoneScreen(state: PorterState, onAdjust: () -> Unit, onHome: () -> U
                         )
                     }
                     Text(
-                        if (state.hasFileAccess) {
-                            stringResource(R.string.open_themes_to_apply)
-                        } else {
-                            stringResource(R.string.move_then_apply)
+                        when {
+                            // A recolored .mtz is for a Xiaomi phone, which this app's own Themes shortcut is not.
+                            state.recolorMode -> stringResource(R.string.apply_in_themes)
+                            state.hasFileAccess -> stringResource(R.string.open_themes_to_apply)
+                            else -> stringResource(R.string.move_then_apply)
                         },
                         style = MaterialTheme.typography.bodySmall,
                         textAlign = TextAlign.Center,
@@ -2258,7 +2463,7 @@ private fun DoneScreen(state: PorterState, onAdjust: () -> Unit, onHome: () -> U
                 }
             }
             FilledTonalButton(onClick = onAdjust, modifier = Modifier.fillMaxWidth().height(52.dp), shape = MaterialTheme.shapes.large) {
-                Text(stringResource(R.string.adjust_and_rebuild))
+                Text(stringResource(if (state.recolorMode) R.string.adjust_and_resave else R.string.adjust_and_rebuild))
             }
             TextButton(onClick = onHome, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.convert_another)) }
         }

@@ -110,10 +110,7 @@ object MtzParser {
             if (previous == null || score > previous.first) best[name] = score to entry
         }
         val drawables = best.mapValues { it.value.second }
-        val icons = drawables.filterKeys { name ->
-            '-' !in name && !name.startsWith("icon_") && !name.startsWith("status_bar_") &&
-                !name.startsWith("folder_") && AppComponent.looksLikePackage(name)
-        }.toSortedMap()
+        val icons = drawables.filterKeys(::isIconName).toSortedMap()
 
         return MtzIcons(
             icons = icons,
@@ -126,6 +123,16 @@ object MtzParser {
             iconScale = readText("transform_config.xml")?.let { runCatching { parseTransformScale(it) }.getOrNull() },
         )
     }
+
+    /**
+     * Whether a drawable in the icons component is one app's icon rather than theme-wide artwork: the mask,
+     * plate, border and folder assets, the quick-settings toggles and the density-qualified variants all share
+     * the directory with them. Also what [MtzRecolor] classifies entries by, so a recolor treats exactly the
+     * files this parser calls icons as icons.
+     */
+    fun isIconName(name: String): Boolean =
+        '-' !in name && !name.startsWith("icon_") && !name.startsWith("status_bar_") &&
+            !name.startsWith("folder_") && AppComponent.looksLikePackage(name)
 
     fun parseTransformScale(xml: String): Float? {
         val points = SafeXml.parse(xml).getElementsByTagName("Point")

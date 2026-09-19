@@ -194,6 +194,31 @@ Even with all five, the Themes app shows no shape picker for an imported theme (
 | `transform_config.xml` PointsMapping (90-unit grid) | icon scale |
 | `preview/preview_icons_*.jpg` | extra previews after the generated ones |
 
+### 6.1 MIUI .mtz → MIUI .mtz (recolor)
+
+A recolor is not a port: the theme stays a `.mtz`, and only the pixels inside the `icons` component change.
+`MtzRecolor` (pure) decides what each entry of the nested archive is; `MtzRecolorBuilder` acts on it.
+
+| Entry of the `icons` archive | Treatment |
+|---|---|
+| `res/drawable*/<package or activity>.<png\|webp\|jpg>` | Tinted, and reshaped when a fixed shape is chosen. Left out entirely when "only installed apps" is on and the package is absent |
+| `res/drawable*/icon_pattern.png`, `icon_border.png`, `icon_folder*.png` | Tinted, never reshaped: their own pixel size and outline are what the launcher composites against |
+| `fancy_icons/**/*.png` (calendar, clock, weather frames) | Tinted only, for the same reason |
+| `res/drawable*/icon_mask.png` | Copied. Only its alpha is ever read, so recoloring it would produce a file the launcher cannot tell apart |
+| `res/drawable*/status_bar_*` | Copied. Quick-settings toggles tell their on/off states apart by color |
+| `*.xml`, directory entries, everything else | Copied byte for byte |
+
+Observed in the two real themes used as fixtures: every entry (outer and nested) is DEFLATED, both archives
+carry explicit directory entries, and icons are 224 px `PNG` colour type 6. The rewrite reproduces each entry's
+own method and timestamp, and recomputes size and CRC only for entries whose bytes changed, so a theme the
+Themes app already accepts still installs.
+
+**Filling gaps.** An app with no drawable in the theme is one MIUI improvises for at runtime — it scales the
+app's own icon by `transform_config.xml`, cuts it with `icon_mask.png`, drops it on `icon_pattern.png` and lays
+`icon_border.png` over it. That improvisation reads the app's live icon, so it is the one tile a recolor cannot
+reach: it stays in the app's own colors while everything around it turns one hue. `MiuiIconArt` assembles the
+same composition from already-tinted artwork and writes it in as a real `res/drawable*/<package>.png`.
+
 ## 7. Icon pack APK → Nebula
 
 | appfilter.xml | Nebula |

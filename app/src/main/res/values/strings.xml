@@ -253,4 +253,30 @@
     <string name="project_remove_title">Remove \u201c%1$s\u201d?</string>
     <string name="project_remove_detail">This only deletes the saved tweaks. The icon pack or theme it was made from, and any theme already built, are left alone.</string>
     <string name="project_source_missing">Can\'t find the source this was made from (%1$s). It may have been moved, deleted or uninstalled \u2014 import it again to carry on from these tweaks.</string>
+    <!-- Recolor a MIUI theme -->
+    <string name="port_theme">Port a theme</string>
+    <string name="port_theme_detail">Turn an icon pack or a Xiaomi theme into a NebulaAIOS theme (.zmtp)</string>
+    <string name="modify_theme">Modify a theme</string>
+    <string name="modify_theme_detail">Recolor a theme and save it in its own format</string>
+    <string name="recolor_miui_subtitle">Tint it, save it as .mtz</string>
+    <string name="recolor_miui_detail">Stays a Xiaomi theme; only the icons change</string>
+    <string name="recolor_title">Recolor theme</string>
+    <string name="recolor_intro">Only the icons in this theme change. Every other component, its previews, its name and its wallpapers are written back exactly as they were found, so the result is still a theme the Xiaomi Themes app accepts.</string>
+    <string name="recolor_previews_hint">The theme\'s own preview pictures are left alone, so the Themes app still shows the original colors there.</string>
+    <string name="recolor_summary">%1$d icons · %2$d apps without one</string>
+    <string name="recolor_fill_missing">Add icons for apps the theme skips</string>
+    <string name="recolor_fill_missing_detail">Draws one from the app\'s own icon on this theme\'s plate and mask, so it matches the rest instead of staying in its own colors. %1$d apps on this phone need one.</string>
+    <string name="recolor_installed_only_detail">Leaves out icons for apps that aren\'t installed here. Makes the theme smaller, but also useless to anyone else.</string>
+    <string name="recolor_shape_hint">A shape is baked into each icon, over the theme\'s own artwork. Leave it as None to keep every icon exactly as drawn.</string>
+    <string name="save_into">Save into %1$s</string>
+    <string name="save_mtz">Save .mtz</string>
+    <string name="recolor_result_summary">%1$d icons recolored · %2$d added · %3$s</string>
+    <string name="recolor_result_dropped">%1$d icons for apps not installed here were left out.</string>
+    <string name="recolor_saved">Theme recolored</string>
+    <string name="apply_in_themes">Apply it from the Themes app on a Xiaomi/HyperOS phone.</string>
+    <string name="adjust_and_resave">Adjust and save again</string>
+    <string name="mtz_has_no_icons">%1$s has no icons to recolor. Is it an icon theme?</string>
+    <string name="progress_recolor">Icons %1$d/%2$d</string>
+    <string name="progress_generate">Added icons %1$d/%2$d</string>
+    <string name="progress_repacking">Repacking the theme</string>
 </resources>

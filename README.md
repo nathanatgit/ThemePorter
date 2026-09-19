@@ -11,15 +11,19 @@ Everything runs offline. The app has no Internet permission, reads only the sour
 
 The result is a `.zmtp` file you apply from the phone's built-in **Themes** app, just like any other theme.
 
+It can also **recolor a Xiaomi theme without porting it**: an `.mtz` goes in, a tinted `.mtz` comes out, for Xiaomi/HyperOS phones. See [Recoloring a Xiaomi theme](#recoloring-a-xiaomi-theme).
+
 ## Getting started
 
 <img src="docs/screenshots/home.jpg" alt="Home screen: choose an installed icon pack, an icon-pack APK, or a MIUI theme" width="320">
 
 1. **Grant "All files access"** when the home screen asks. With it, a file you pick is read in place and the finished theme is saved straight into `Internal storage/Theme`. You can change the output folder from the system folder picker (it can't select the storage root or Download). Without the permission, the app copies the source first and asks where to save each result.
-2. **Choose a source** on the home screen:
+2. **Choose a source** on the home screen, under **Port a theme**:
    - **Installed icon pack** — pick from apps already on your phone that contain an `appfilter.xml`.
    - **Icon pack APK file** — pick any icon-pack APK from storage.
-   - **MIUI theme** — pick a `.mtz` file.
+   - **Xiaomi theme** — pick a `.mtz` file.
+
+   Under **Modify a theme**, **Xiaomi theme** instead recolors an `.mtz` and saves it as an `.mtz`; see [Recoloring a Xiaomi theme](#recoloring-a-xiaomi-theme).
 
 ## Customizing the theme
 
@@ -59,6 +63,17 @@ Blend mode is the global look; the curve is the per-icon correction that makes e
 <img src="docs/screenshots/saved.jpg" alt="Done screen: theme saved, with a button to open the Themes app" width="320">
 
 Tap **Build into…**, then open the **Themes** app and apply it from there like any other theme.
+
+## Recoloring a Xiaomi theme
+
+The home screen has two halves. **Port a theme** turns an icon pack or a Xiaomi theme into a NebulaAIOS `.zmtp`. **Modify a theme** does something different: it takes a Xiaomi theme and hands back a Xiaomi theme, with its icons recolored.
+
+Pick **Xiaomi theme** under Modify a theme, choose a tint, and save. The result is still an `.mtz`, applied from the Themes app on a Xiaomi/HyperOS phone.
+
+- **Only the icons change.** Every other component, the theme's own previews, its name, its author and its wallpapers are written back exactly as they were found, each entry with the compression it arrived with. The theme's own preview pictures aren't recolored, so the Themes app still shows the original colors there.
+- **The tint is the same one the port flow uses** — the same colors, strength and blend modes — so a theme looks the same recolored as it would ported. Leaving the shape as **None** keeps every icon's own artwork, outline and pixel size, and changes only its colors; choosing a shape bakes that outline in instead.
+- **Apps the theme skips can be filled in.** Xiaomi improvises an icon for those at runtime from the app's own icon, which means it stays in its original colors while everything around it turns one hue. Switch on **Add icons for apps the theme skips** and the app draws one instead, using the theme's own plate and mask, and writes it into the theme.
+- **Only apps installed on this phone** leaves out icons for everything else. It makes the file much smaller, but also makes it useless to anyone whose apps differ from yours — leave it off for a theme you intend to share.
 
 ## Coming back to a theme
 

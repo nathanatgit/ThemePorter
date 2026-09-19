@@ -381,3 +381,53 @@ object DynamicIcons {
         }
     }
 }
+
+/**
+ * Builds the icon a MIUI theme is missing for an installed app, out of the theme's own parts.
+ *
+ * MIUI improvises one at runtime for any app a theme has no drawable for: it scales the app's own icon by
+ * transform_config.xml, cuts it with icon_mask.png, drops it on icon_pattern.png and lays icon_border.png over
+ * the result. That improvisation reads the app's icon live, so it is the one tile in the grid a recolor cannot
+ * reach - it stays in the app's own colors while everything around it turns one hue. Assembling the same
+ * composition here, from artwork this app has already tinted, and writing it into the archive as a real
+ * drawable is what closes that gap.
+ */
+object MiuiIconArt {
+    /**
+     * [mask], [pattern] and [border] are the theme's own assets, already tinted by the caller and shared across
+     * every generated icon: none of them is recycled here. [scale] is [com.nathanhanapps.nebulaThemePorter.core.MtzIcons.iconScale],
+     * which only means anything against a mask - without one there is no shape for an overflowing icon to be
+     * cut back to, so it is ignored.
+     */
+    fun render(
+        glyph: Bitmap,
+        size: Int,
+        mask: Bitmap?,
+        pattern: Bitmap?,
+        border: Bitmap?,
+        scale: Float,
+        tintColor: Int?,
+        tintStrength: Float,
+        tintBlendMode: TintBlendMode = TintBlendMode.MULTIPLY,
+    ): Bitmap {
+        val tinted = tintColor?.let { Bitmaps.tint(glyph, it, tintStrength, tintBlendMode) } ?: glyph
+        val art = if (mask == null) {
+            Bitmaps.fit(tinted, size)
+        } else {
+            val scaled = Bitmaps.fit(tinted, size, scale.coerceIn(0.5f, 1.25f))
+            Bitmaps.maskedBy(scaled, mask, size).also { scaled.recycle() }
+        }
+        if (tinted !== glyph) tinted.recycle()
+        if (pattern == null && border == null) return art
+
+        val out = Bitmaps.square(size)
+        val canvas = Canvas(out)
+        val bounds = RectF(0f, 0f, size.toFloat(), size.toFloat())
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        pattern?.let { canvas.drawBitmap(it, null, bounds, paint) }
+        canvas.drawBitmap(art, null, bounds, paint)
+        border?.let { canvas.drawBitmap(it, null, bounds, paint) }
+        art.recycle()
+        return out
+    }
+}

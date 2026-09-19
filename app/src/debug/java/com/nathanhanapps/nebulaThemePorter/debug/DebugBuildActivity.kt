@@ -6,8 +6,10 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.lifecycle.lifecycleScope
+import com.nathanhanapps.nebulaThemePorter.build.MtzRecolorBuilder
 import com.nathanhanapps.nebulaThemePorter.build.ThemeBuilder
 import com.nathanhanapps.nebulaThemePorter.core.BuildOptions
+import com.nathanhanapps.nebulaThemePorter.core.MtzRecolor
 import com.nathanhanapps.nebulaThemePorter.core.FixedIconComposition
 import com.nathanhanapps.nebulaThemePorter.core.FixedIconShape
 import com.nathanhanapps.nebulaThemePorter.core.IconPlanner
@@ -28,6 +30,10 @@ private const val NL = "\n"
  * adb shell am start -n com.nathanhanapps.nebulaThemePorter/.debug.DebugBuildActivity \
  *   --es source theme.mtz --es output out.zmtp --ez onlyInstalled true
  *
+ * Add --ez recolor true to rewrite a .mtz as a tinted .mtz instead of porting it, which needs no plan and
+ * ignores every option except the ones that decide how an icon looks (--es tintColor, --es blendMode,
+ * --es shape, --ez onlyInstalled, --ez fillMissing).
+ *
  * Progress and the result go to <output>.status.txt next to the output (logcat is unreliable on NebulaAIOS).
  * The status file's first line is RUNNING, DONE or FAILED. The same text is mirrored on screen - a headless
  * build of a large pack takes tens of seconds, and without it the phone just shows a blank activity with no
@@ -46,7 +52,13 @@ class DebugBuildActivity : ComponentActivity() {
         setContentView(ScrollView(this).apply { addView(screen) })
         val dir = getExternalFilesDir(null) ?: filesDir
         val sourceName = intent.getStringExtra("source")
-        val output = intent.getStringExtra("output") ?: "${sourceName?.substringBeforeLast('.')}.zmtp"
+        val recolor = intent.getBooleanExtra("recolor", false)
+        val defaultOutput = if (recolor) {
+            MtzRecolor.outputName(sourceName.orEmpty())
+        } else {
+            "${sourceName?.substringBeforeLast('.')}.zmtp"
+        }
+        val output = intent.getStringExtra("output") ?: defaultOutput
         val status = File(dir, "$output.status.txt")
         if (sourceName == null) {
             report(screen, status, "FAILED" + NL + "missing --es source")
@@ -69,6 +81,28 @@ class DebugBuildActivity : ComponentActivity() {
                 val input = File(dir, sourceName)
                 val source = if (sourceName.endsWith(".apk")) IconPackSource.open(this@DebugBuildActivity, input) else MtzSource.open(this@DebugBuildActivity, input)
                 source.use { src ->
+                    if (recolor) {
+                        require(src is MtzSource) { "recolor needs a .mtz source" }
+                        val options = BuildOptions(
+                            onlyInstalledApps = onlyInstalled, fixedShape = shape, fixedComposition = composition,
+                            padBackground = padColor ?: 0xFFFFFFFFL, fixedTintColor = tintColor,
+                            fixedTintBlendMode = blendMode,
+                            fixedIconScale = iconScale, fixedBackgroundScale = backgroundScale,
+                            generateMissingAppIcons = intent.getBooleanExtra("fillMissing", true),
+                        )
+                        val installed = InstalledApps.launcherActivities(this@DebugBuildActivity).keys
+                        notes.append("recolor icons=${src.icons.size} installed=${installed.size}\n")
+                        notes.append("shape=$shape tint=$tintColor blend=$blendMode onlyInstalled=$onlyInstalled\n")
+                        return@use MtzRecolorBuilder(this@DebugBuildActivity).recolor(
+                            src, options, installed, { File(dir, output).outputStream() },
+                        ) { progress ->
+                            val elapsed = (SystemClock.elapsedRealtime() - started) / 1000.0
+                            report(
+                                screen, status,
+                                "RUNNING" + NL + "%.1fs  ${progress.done}/${progress.total}  ${progress.label}".format(elapsed) + NL + notes,
+                            )
+                        }
+                    }
                     val stock = StockComponentIndex.parse(assets.open("stock_components.txt").bufferedReader().use { it.readText() })
                     val planner = IconPlanner(stock, InstalledApps.launcherActivities(this@DebugBuildActivity))
                     val options = BuildOptions(

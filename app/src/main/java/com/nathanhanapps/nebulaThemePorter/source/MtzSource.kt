@@ -25,8 +25,16 @@ class MtzSource private constructor(
     override val description: String,
     override val icons: List<SourceIcon>,
     override val extras: SourceExtras,
+    /** Name of the outer entry holding the icons archive, null when the theme themes no icons. */
+    internal val iconsEntry: String?,
+    /** transform_config.xml's scale, needed to place a generated icon inside the theme's own mask. */
+    internal val iconScale: Float?,
 ) : ThemeSource {
     override val kind = SourceKind.MTZ
+
+    /** The open archives, so a recolor can rewrite the theme entry by entry without copying it again. */
+    internal val outerArchive: ZipFile get() = outer
+    internal val iconsArchive: ZipFile? get() = inner
 
     override fun readBytes(imageId: String): ByteArray? {
         val zip = when {
@@ -116,6 +124,8 @@ class MtzSource private constructor(
                     description = pkg.metadata.description,
                     icons = icons,
                     extras = extras,
+                    iconsEntry = pkg.iconsEntry,
+                    iconScale = iconSet?.iconScale,
                 )
             } catch (error: Throwable) {
                 runCatching { inner?.close() }
