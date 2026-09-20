@@ -1018,6 +1018,7 @@ private fun ConfigureScreen(
                                 SystemAppGridCell(
                                     app = app,
                                     sourceId = state.assignments[app.id],
+                                    thumbnailId = viewModel.resolveSourceId(key),
                                     fallbackEnabled = options.generateMissingAppIcons,
                                     tintColor = options.fixedTintColor,
                                     tintStrength = options.fixedTintStrength,
@@ -1957,6 +1958,8 @@ private fun AppGridRow(cellCount: Int, content: @Composable RowScope.() -> Unit)
 private fun RowScope.SystemAppGridCell(
     app: ZteSystemApp,
     sourceId: String?,
+    /** What to draw: [sourceId] when the source has artwork, otherwise this phone's own icon for the app. */
+    thumbnailId: String?,
     fallbackEnabled: Boolean,
     tintColor: Long?,
     tintStrength: Float,
@@ -1972,7 +1975,7 @@ private fun RowScope.SystemAppGridCell(
     val language = LocalConfiguration.current.locales[0].language
     AppGridCell(
         label = if (language == Locale.CHINESE.language) app.labelZh else app.labelEn,
-        thumbnailId = sourceId,
+        thumbnailId = thumbnailId,
         isFallback = isFallback,
         tintColor = tintColor,
         tintStrength = tintStrength,

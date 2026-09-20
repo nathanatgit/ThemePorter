@@ -51,6 +51,20 @@ class IconPlanner(
         manualAssignments.filterValues { it in sourceIds }.forEach { (stem, sourceId) -> add(stem, sourceId) }
 
         val assignments = systemAssignments.filterValues { it in sourceIds }
+        // Which assigned system apps lay claim to each package. Phone and Contacts are both com.android.contacts,
+        // so a package-only file there could only show one of them and would be wrong for the other.
+        val claimants = HashMap<String, MutableSet<String>>()
+        ZteSystemApps.all.forEach { app ->
+            if (app.id !in assignments) return@forEach
+            app.stems.forEach { claimants.getOrPut(it.substringBefore('-')) { HashSet() }.add(app.id) }
+        }
+        // Packages an assigned system app is the sole owner of. The stock themes name such an app with exactly
+        // one file - the stock component stem, no package-only name and no other activity - and that is what the
+        // device honours. Where a pack also ships its own artwork for the same package (com.android.gallery3d is
+        // the only one), the loops below would add those other names from that artwork, so the app answered to
+        // several files at once and the hand-picked icon was not the one displayed. Reserving the package keeps
+        // the output for an assigned system app identical in shape to a stock theme's.
+        val reserved = claimants.filterValues { it.size == 1 }.keys
         ZteSystemApps.all.forEach { app ->
             val sourceId = assignments[app.id] ?: return@forEach
             app.stems.forEach { add(it, sourceId) }
@@ -64,10 +78,12 @@ class IconPlanner(
 
         // Exact components first so an icon pack entry for the current activity beats an entry for an old one.
         eligible.forEach { source ->
+            if (AppComponent.sanitize(source.packageName()) in reserved) return@forEach
             source.component?.takeIf { it.className != null }?.let { add(it.stem, source.id) }
         }
         eligible.forEach { source ->
             val packageName = source.packageName()
+            if (AppComponent.sanitize(packageName) in reserved) return@forEach
             val installed = installedLaunchers[packageName].orEmpty()
             val stems = if (installed.isNotEmpty()) {
                 installed.map { AppComponent(packageName, it).stem }
@@ -81,6 +97,7 @@ class IconPlanner(
             val packageName = source.packageName()
             // MIUI alias names such as com.android.contacts.activities.TwelveKeyDialer are not packages here.
             if (ZteSystemApps.matchAlias(source.key) != null && packageName !in installedLaunchers) return@forEach
+            if (AppComponent.sanitize(packageName) in reserved) return@forEach
             if (fallbacks.add(packageName)) add(AppComponent.sanitize(packageName), source.id)
         }
 
@@ -88,6 +105,7 @@ class IconPlanner(
         // own launcher icon, so background/tint still apply instead of the launcher's plain fallback plate.
         if (generateMissingAppIcons) {
             installedLaunchers.forEach { (packageName, classNames) ->
+                if (AppComponent.sanitize(packageName) in reserved) return@forEach
                 classNames.forEach { className -> add(AppComponent(packageName, className).stem, DeviceIconId.of(packageName, className)) }
             }
         }

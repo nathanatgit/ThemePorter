@@ -192,7 +192,8 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
     private var source: ThemeSource? = null
     private var planner: IconPlanner? = null
 
-    /** Package to launcher activities, kept from the last load: what a recolor filters and fills against. */
+    /** Package to launcher activities, kept from the last load: what a recolor filters and fills against, and
+     * what lets a system app with no artwork in the source fall back to its own icon. */
     private var installedLaunchers: Map<String, List<String>> = emptyMap()
     private var wallpaperFile: File? = null
     private var fixedBackgroundFile: File? = null
@@ -448,7 +449,9 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
      * no pack match and no manual override falls back to, which earlier versions of this resolution missed,
      * silently dropping the curve for any app that only ever showed its own launcher icon. */
     private fun resolveSourceId(state: PorterState, key: String): String? = when {
-        key.startsWith("system:") -> state.assignments[key.removePrefix("system:")]
+        key.startsWith("system:") -> key.removePrefix("system:").let { id ->
+            state.assignments[id] ?: systemFallbackIconId(state, id)
+        }
         key.startsWith("recolor:") -> {
             val packageName = key.removePrefix("recolor:")
             state.recolorApps.firstOrNull { it.packageName == packageName }?.imageId
@@ -461,6 +464,20 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         else -> null
+    }
+
+    /**
+     * The phone's own launcher icon for a ZTE system app the source has no artwork for - the same fallback a
+     * user-app cell already gets. Without it those cells were simply blank, with nothing to preview, curve or
+     * build, even though [BuildOptions.generateMissingAppIcons] does generate an icon for them; on this phone
+     * AI Assistant, Compass and Community are all in that position.
+     */
+    private fun systemFallbackIconId(state: PorterState, id: String): String? {
+        if (!state.options.generateMissingAppIcons) return null
+        val app = ZteSystemApps.all.firstOrNull { it.id == id } ?: return null
+        val packages = app.stems.mapTo(HashSet()) { it.substringBefore('-') }
+        val entry = installedLaunchers.entries.firstOrNull { AppComponent.sanitize(it.key) in packages } ?: return null
+        return entry.value.firstOrNull()?.let { DeviceIconId.of(entry.key, it) }
     }
 
     /** Public entry point for the UI (e.g. the curve panel's histogram) to resolve the same image a grid cell

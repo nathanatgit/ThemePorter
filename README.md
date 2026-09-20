@@ -11,7 +11,7 @@ Everything runs offline. The app has no Internet permission, reads only the sour
 
 The result is a `.zmtp` file you apply from the phone's built-in **Themes** app, just like any other theme.
 
-It can also **recolor a Xiaomi theme without porting it**: an `.mtz` goes in, a tinted `.mtz` comes out, for Xiaomi/HyperOS phones. See [Recoloring a Xiaomi theme](#recoloring-a-xiaomi-theme).
+It can also **recolor a Xiaomi theme without porting it**: an `.mtz` goes in, a tinted `.mtz` comes out, for Xiaomi/HyperOS phones. **That feature is deprecated and unmaintained** — Xiaomi's Themes app rejects the result. See [Recoloring a Xiaomi theme](#recoloring-a-xiaomi-theme).
 
 ## Getting started
 
@@ -46,7 +46,7 @@ It can also **recolor a Xiaomi theme without porting it**: an `.mtz` goes in, a 
 - **Wallpaper** — use the source's own wallpaper if it has one, or the built-in gradient studio (three colors, Linear/Radial/Soft-blob mixing, blur, and one-tap recoloring/reshuffling).
 - **Calendar & clock** — both automatically pick up the same shape, composition, icon/background size and tint as every other icon, and both sit in the live preview, so a treatment that doesn't suit them can be caught before building rather than after.
 - **Options** — limit the theme to apps actually installed on your phone, generate a plain calendar/clock when the source has none, and generate a temporary icon (from the app's own launcher icon) for installed apps missing from the source, optionally keeping that app's own icon background instead of the theme's unified color.
-- **Manual replacement** — override the suggested icon for any supported system app, or any other installed, launcher-visible app, from a grid of the source's own icons, shown with the exact shape and tint they'll export with.
+- **Manual replacement** — override the suggested icon for any supported system app, or any other installed, launcher-visible app, from a grid of the source's own icons, shown with the exact shape and tint they'll export with. An app the source has no artwork for falls back to its own launcher icon, so it can still be previewed, curved and built rather than sitting blank.
 - **Batch tone curve** — long-press any icon in that grid to start selecting more, then drag a curve over a live histogram of the selected icons to even out how light or dark they look once tinted (tap empty space to add a point, drag a point to move it, long-press a point to remove it). A **Normalize** button shifts each selected icon by its own amount so they land on the same average brightness in one step, instead of hand-tuning each one.
 
 ### Making a mixed pack look like one set
@@ -65,6 +65,19 @@ Blend mode is the global look; the curve is the per-icon correction that makes e
 Tap **Build into…**, then open the **Themes** app and apply it from there like any other theme.
 
 ## Recoloring a Xiaomi theme
+
+> **Deprecated — does not work on current Xiaomi/HyperOS builds, and is no longer maintained.**
+>
+> Applying a recolored `.mtz` fails in Xiaomi's Themes app with **`downloadright|402`**. A `.mtz` carries rights
+> metadata that the Themes app verifies on apply, and HTTP 402 is *Payment Required* — so a theme that has been
+> repacked is refused as unlicensed rather than as malformed. It fails the rights check, not a format check, and
+> the same symptom has been reported by other users on Xiaomi's own forum.
+>
+> Nothing on this side can fix that: it is a licensing boundary in the Themes app, not a defect in how the archive
+> is rewritten. The code is kept because the rewrite itself is sound — entry order, per-entry compression and
+> every non-icon component are preserved — and it would be the starting point if Xiaomi ever permits it, or if
+> someone applies the result another way. **Porting a Xiaomi theme to a `.zmtp` is unaffected** and remains the
+> supported path; only handing a modified `.mtz` back to Xiaomi's Themes app is blocked.
 
 The home screen has two halves. **Port a theme** turns an icon pack or a Xiaomi theme into a NebulaAIOS `.zmtp`. **Modify a theme** does something different: it takes a Xiaomi theme and hands back a Xiaomi theme, with its icons recolored.
 

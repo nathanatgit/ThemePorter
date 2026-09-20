@@ -29,6 +29,68 @@ class IconPlannerTest {
         assertEquals("i:mm", plan.icons.last().sourceId)
     }
 
+    /**
+     * The gallery case. A pack ships its own com.android.gallery3d artwork, so that package used to answer to
+     * three names at once - the stock stem from the assignment, plus the device's real activity and the
+     * package-only name from the pack's artwork - and the icon shown was not the one picked. Stock themes name
+     * a system app with exactly one file, so an assigned system app now does too.
+     */
+    @Test
+    fun anAssignedSystemAppShipsOnlyItsStockStem() {
+        val chosen = SourceIcon("i:chosen", "com.miui.gallery")
+        val packsOwn = SourceIcon("i:packs", "com.android.gallery3d")
+        val planner = IconPlanner(
+            StockComponentIndex(emptyList()),
+            mapOf("com.android.gallery3d" to listOf("com.zte.gallery3d.activity.launcher.MainGallery")),
+        )
+
+        val plan = planner.plan(
+            listOf(chosen, packsOwn),
+            mapOf("gallery" to "i:chosen"),
+            onlyInstalledApps = false,
+            generateMissingAppIcons = true,
+        )
+
+        val gallery = plan.icons.filter { it.stem.startsWith("com_android_gallery3d") }
+        assertEquals(
+            "exactly the stock name, as a stock theme ships it",
+            listOf("com_android_gallery3d-com_android_newgallery_NewGallery"),
+            gallery.map { it.stem },
+        )
+        assertEquals("i:chosen", gallery.single().sourceId)
+    }
+
+    /** An unassigned package keeps every name it had: only a deliberate assignment reserves one. */
+    @Test
+    fun packageOnlyFallbackStillComesFromThePackWhenNothingIsAssigned() {
+        val planner = IconPlanner(
+            StockComponentIndex(emptyList()),
+            mapOf("com.android.gallery3d" to listOf("com.zte.gallery3d.activity.launcher.MainGallery")),
+        )
+
+        val plan = planner.plan(
+            listOf(SourceIcon("i:packs", "com.android.gallery3d")),
+            emptyMap(),
+            onlyInstalledApps = false,
+        )
+
+        assertEquals("i:packs", plan.icons.associate { it.stem to it.sourceId }["com_android_gallery3d"])
+    }
+
+    /** Phone and Contacts are both com.android.contacts: a package-only file could only show one of them. */
+    @Test
+    fun aPackageTwoSystemAppsShareIsLeftToThePacksOwnArtwork() {
+        val planner = IconPlanner(StockComponentIndex(emptyList()), emptyMap())
+        val assignments = planner.autoAssignSystemApps(mtzSources)
+
+        val plan = planner.plan(mtzSources, assignments, onlyInstalledApps = false)
+
+        assertFalse(
+            "phone/contacts must not claim the shared package name",
+            "com_android_contacts" in plan.icons.map { it.stem },
+        )
+    }
+
     @Test
     fun unknownActivityFallsBackToPackageName() {
         val planner = IconPlanner(StockComponentIndex(emptyList()), emptyMap())
