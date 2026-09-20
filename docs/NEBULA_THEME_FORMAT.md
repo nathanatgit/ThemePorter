@@ -71,6 +71,7 @@ com_tencent_mm-com_tencent_mm_ui_LauncherUI_back.png
 ```
 
 - The activity is the launcher activity's full class name. A few stock entries use the short name instead (`com_android_messaging-ui_conversationlist_ConversationListActivity`), so the app copies stock stems verbatim for system apps.
+- **One app should answer to one name.** A package can be written under several names at once - the stock component stem, the activity the device really exposes, and the package-only name - and when they hold different pictures the one displayed is not the one intended. Stock themes name a system app with exactly one file, so `IconPlanner` reserves a package as soon as a system app is assigned to it and keeps the other writers off it. See "Confirmed on the device".
 - **Package-only names** (`com_tencent_mm.png`) also work. Stock `60` ships `com_zte_nebulatranslation.png`, and the community ports ship between 500 and 6,500 such files, almost none with an activity.
 - The Themes app draws its theme card from these stems (`NebulaSpec.PREVIEW_STEMS`): notepad, recorder, calculator, camera, Chrome, contacts/dialer, gallery, settings, Google Photos, WeChat, QQ, phone manager, clock and files.
 
@@ -236,6 +237,24 @@ The porter UI uses a static, restrained Material Tonal Spot palette rather than 
 - **Crop:** layered icons render through `AdaptiveIconDrawable` at a 1.5× zoom, measured from a home-screen screenshot at 1.48–1.52. The app's former variable-shape generator placed cropped artwork in the middle 144 px of `_back` and extended its edges outward, with plate glyphs at 48% of the layer; that generator is now archived (see the note in the intro), but the 1.5×-zoom system fact still holds for any variable-shape theme.
 - **Plate alpha:** the porter preserves partial alpha correctly, but the Nubia launcher/theme engine does not composite it as transparent wallpaper color for variable-shape `_back` layers. In `default_theme_Exported_Icon_Pack.zmtp`, 172 ordinary `_back` layers decoded as uniform RGBA `(100, 107, 192, 105)`; the user observed those layers blending with black after the theme was applied. This rules out a PNG/archive premultiplication error in the porter and makes arbitrary translucent variable-shape plates an unsupported engine case. The stock comparison supports that boundary: all `_back` center pixels were opaque in `default_theme_04` (378 files), `13` (325 files) and `49` (52 files); lower edge alpha in some stock files is only shape anti-aliasing. `default_theme_60` has no layered `_back` files. Fixed PNG transparency is not covered by that device result.
 - **Shape switching:** a root broadcast of `com.zte.theme.ICON_SHAPE_CHANGE` changed `persist.sys.icon_config_mask` and the launcher's `MiFavor_current_icon` from `config_2` to `config_1` and back, tested on stock `13`, and (when the app still built variable-shape themes and sent this broadcast itself) on an imported `default_theme_ntp_ethereal` once the app was allowed root in KernelSU. That generator and its root broadcast are no longer part of the app; this remains a system fact about the framework mask still needing the theme name to start with `default_theme_`.
+
+- **An assigned system app must ship exactly one file (NX733J, Android 16, 2026-09-21).** Gallery was the only
+  system app whose hand-picked icon was ignored: the assignment wrote the stock stem
+  `com_android_gallery3d-com_android_newgallery_NewGallery.png`, while the pack's own `com.android.gallery3d`
+  artwork separately filled `com_android_gallery3d-com_zte_gallery3d_activity_launcher_MainGallery.png` (the
+  activity this device actually exposes, per `cmd package query-activities`) and `com_android_gallery3d.png`. The
+  three held different pictures and the pack's default was the one shown. It is the only ZTE system app this can
+  reach, because `com.android.gallery3d` is the only one of these packages the packs also ship artwork for -
+  every other system app took its manual icon correctly throughout.
+
+  Writing the device's real activity as well did **not** help; only reducing the output to the single stock-named
+  file did, confirmed by the user on the device. All four stock themes ship gallery that way. Adding names is
+  therefore the wrong instinct here: the stock naming is what the launcher honours, and extra names for the same
+  package are what break it.
+
+  Six other system apps name an activity this device does not expose - Messages, Weather, AI Assistant, Compass,
+  Wallet and Community - and all of them theme correctly anyway, so a stem naming an absent activity is not by
+  itself a problem.
 
 ### Still to verify
 
