@@ -66,8 +66,13 @@ class MtzSource private constructor(
         }
 
         private fun create(context: Context, outerFile: File, name: String, deleteOuter: Boolean): MtzSource {
-            val innerFile = File(File(context.cacheDir, "sources").apply { mkdirs() }, "theme-icons.zip")
-            val outer = SourceFiles.openZip(context, outerFile, context.getString(R.string.archive_miui_theme))
+            val innerFile = SourceFiles.tempFile(context, "theme-icons.zip")
+            val outer = try {
+                SourceFiles.openZip(context, outerFile, context.getString(R.string.archive_miui_theme))
+            } catch (error: Throwable) {
+                innerFile.delete()
+                throw error
+            }
             var inner: ZipFile? = null
             try {
                 val pkg = MtzParser.readPackage(SourceFiles.fileNames(outer)) { SourceFiles.readText(outer, it) }

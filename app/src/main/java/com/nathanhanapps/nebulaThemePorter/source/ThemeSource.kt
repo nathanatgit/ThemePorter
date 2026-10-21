@@ -77,12 +77,25 @@ internal object SourceFiles {
             if (cursor.moveToFirst()) cursor.getString(0) else null
         }
 
-    fun copyToCache(context: Context, uri: Uri, name: String): File {
+    /**
+     * A new, uniquely named file in the sources cache. Several sources can be open at once, so a fixed name
+     * would let one overwrite or delete another's file while it is still being read.
+     */
+    fun tempFile(context: Context, name: String): File {
         val dir = File(context.cacheDir, "sources").apply { mkdirs() }
-        val target = File(dir, name)
+        return File.createTempFile(name.substringBeforeLast('.') + "-", "." + name.substringAfterLast('.'), dir)
+    }
+
+    fun copyToCache(context: Context, uri: Uri, name: String): File {
         val input = context.contentResolver.openInputStream(uri)
             ?: throw IllegalArgumentException(context.getString(R.string.cannot_read_selected_file))
-        input.use { copyLimited(context, it, target, MAX_INPUT_BYTES) }
+        val target = tempFile(context, name)
+        try {
+            input.use { copyLimited(context, it, target, MAX_INPUT_BYTES) }
+        } catch (error: Throwable) {
+            target.delete()
+            throw error
+        }
         return target
     }
 
