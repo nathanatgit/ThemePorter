@@ -264,14 +264,25 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun openInstalledIconPack(iconPack: InstalledApps.IconPack) = load(
-        sourceRef = ProjectSource(
-            kind = SourceKind.ICON_PACK,
-            packageName = iconPack.packageName,
-            fileName = iconPack.label,
-        ),
-    ) {
-        IconPackSource.open(app, File(iconPack.apkPath))
+    /** The first pack is the main source; the rest are extra icon choices. */
+    fun openInstalledIconPacks(iconPacks: List<InstalledApps.IconPack>) {
+        val main = iconPacks.firstOrNull() ?: return
+        load(
+            sourceRef = ProjectSource(
+                kind = SourceKind.ICON_PACK,
+                packageName = main.packageName,
+                fileName = main.label,
+            ),
+        ) {
+            val opened = ArrayList<ThemeSource>()
+            try {
+                iconPacks.forEach { opened += IconPackSource.open(app, File(it.apkPath)) }
+            } catch (error: Throwable) {
+                opened.forEach { runCatching { it.close() } }
+                throw error
+            }
+            if (opened.size == 1) opened.first() else CompositeSource(opened)
+        }
     }
 
     private fun persistRead(uri: Uri) {

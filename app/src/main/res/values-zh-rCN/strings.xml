@@ -27,6 +27,7 @@
     <string name="installed_icon_packs_detail">仅列出确认包含 appfilter.xml 的图标包。选择后将直接读取其已安装 APK。</string>
     <string name="detecting_icon_packs">正在检测已安装的图标包…</string>
     <string name="no_installed_icon_packs">未找到启动器可见且包含 appfilter.xml 的已安装图标包。仍可从主页选择 APK 文件。</string>
+    <string name="import_selected">导入（%1$d）</string>
     <string name="refresh">刷新</string>
     <string name="open_themes_app">打开主题应用</string>
 

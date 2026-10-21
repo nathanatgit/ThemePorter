@@ -27,6 +27,7 @@
     <string name="installed_icon_packs_detail">Only confirmed icon packs with an appfilter.xml are listed. Selecting one reads its installed APK directly.</string>
     <string name="detecting_icon_packs">Detecting installed icon packs…</string>
     <string name="no_installed_icon_packs">No launcher-visible installed icon packs with appfilter.xml were found. You can still choose an APK file from the home screen.</string>
+    <string name="import_selected">Import (%1$d)</string>
     <string name="refresh">Refresh</string>
     <string name="open_themes_app">Open Themes app</string>
     <string name="private_by_design" translatable="false">Design by NathanHan</string>

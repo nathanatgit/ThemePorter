@@ -242,9 +242,9 @@ fun PorterApp(viewModel: PorterViewModel) {
         InstalledIconPackDialog(
             state = state,
             onRefresh = viewModel::loadInstalledIconPacks,
-            onPick = { pack ->
+            onPick = { packs ->
                 showInstalledIconPacks = false
-                viewModel.openInstalledIconPack(pack)
+                viewModel.openInstalledIconPacks(packs)
             },
             onDismiss = { showInstalledIconPacks = false },
         )
@@ -586,16 +586,31 @@ private fun SourceCard(
 private fun InstalledIconPackDialog(
     state: PorterState,
     onRefresh: () -> Unit,
-    onPick: (InstalledApps.IconPack) -> Unit,
+    onPick: (List<InstalledApps.IconPack>) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // Package names in tap order: the first is the main source. Long press starts selecting.
+    var selected by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    val selecting = selected.isNotEmpty()
+    fun toggle(pack: InstalledApps.IconPack) {
+        selected = if (pack.packageName in selected) selected - pack.packageName else selected + pack.packageName
+    }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxSize().safeDrawingPadding()) {
                 TopAppBar(
                     title = { Text(stringResource(R.string.installed_icon_packs), style = MaterialTheme.typography.titleLarge) },
                     navigationIcon = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
-                    actions = { TextButton(onClick = onRefresh) { Text(stringResource(R.string.refresh)) } },
+                    actions = {
+                        if (selecting) {
+                            TextButton(onClick = {
+                                val byName = state.installedIconPacks.associateBy { it.packageName }
+                                onPick(selected.mapNotNull(byName::get))
+                            }) { Text(stringResource(R.string.import_selected, selected.size)) }
+                        } else {
+                            TextButton(onClick = onRefresh) { Text(stringResource(R.string.refresh)) }
+                        }
+                    },
                 )
                 when {
                     state.installedIconPacksLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -617,11 +632,16 @@ private fun InstalledIconPackDialog(
                     ) {
                         item { Hint(stringResource(R.string.installed_icon_packs_detail)) }
                         items(state.installedIconPacks, key = { it.packageName }) { pack ->
+                            val order = selected.indexOf(pack.packageName)
                             ElevatedCard(
-                                onClick = { onPick(pack) },
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth().combinedClickable(
+                                    onClick = { if (selecting) toggle(pack) else onPick(listOf(pack)) },
+                                    onLongClick = { toggle(pack) },
+                                ),
                                 shape = MaterialTheme.shapes.large,
-                                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                                colors = CardDefaults.elevatedCardColors(
+                                    containerColor = if (order >= 0) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
+                                ),
                                 elevation = CardDefaults.elevatedCardElevation(defaultElevation = 0.dp),
                             ) {
                                 Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -639,7 +659,7 @@ private fun InstalledIconPackDialog(
                                             overflow = TextOverflow.Ellipsis,
                                         )
                                     }
-                                    Text("›", style = MaterialTheme.typography.titleLarge)
+                                    Text(if (order >= 0) (order + 1).toString() else "›", style = MaterialTheme.typography.titleLarge)
                                 }
                             }
                         }
