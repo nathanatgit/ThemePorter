@@ -4,6 +4,10 @@ name: Test release
 # artifact. No tag and no GitHub release are created.
 on:
   workflow_dispatch:
+  # TEMPORARY: remove once the workflow is on the default branch.
+  push:
+    branches:
+      - claude/fervent-fermi-bj2dcq
 
 jobs:
   build:
