@@ -154,11 +154,11 @@ fun PorterApp(viewModel: PorterViewModel) {
         onPauseOrDispose { }
     }
 
-    val openIconPack = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let { viewModel.open(SourceKind.ICON_PACK, it) }
+    val openIconPack = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) viewModel.open(SourceKind.ICON_PACK, uris)
     }
-    val openMtz = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let { viewModel.open(SourceKind.MTZ, it) }
+    val openMtz = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) viewModel.open(SourceKind.MTZ, uris)
     }
     val pickWallpaper = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(viewModel::setWallpaper)

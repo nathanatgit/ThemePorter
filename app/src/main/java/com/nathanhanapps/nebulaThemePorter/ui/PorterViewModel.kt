@@ -40,6 +40,7 @@ import com.nathanhanapps.nebulaThemePorter.render.DynamicIcons
 import com.nathanhanapps.nebulaThemePorter.render.PreviewRenderer
 import com.nathanhanapps.nebulaThemePorter.render.FixedIconArt
 import com.nathanhanapps.nebulaThemePorter.render.Shapes
+import com.nathanhanapps.nebulaThemePorter.source.CompositeSource
 import com.nathanhanapps.nebulaThemePorter.source.IconPackSource
 import com.nathanhanapps.nebulaThemePorter.source.InstalledApps
 import com.nathanhanapps.nebulaThemePorter.source.MtzSource
@@ -210,6 +211,40 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
             file != null -> MtzSource.open(app, file)
             kind == SourceKind.ICON_PACK -> IconPackSource.open(app, uri)
             else -> MtzSource.open(app, uri)
+        }
+    }
+
+    /** Multi-select from the picker: the first file is the main source, the rest are extra icon choices. */
+    fun open(kind: SourceKind, uris: List<Uri>) {
+        if (uris.size <= 1) {
+            uris.firstOrNull()?.let { open(kind, it) }
+            return
+        }
+        val first = uris.first()
+        load(
+            sourceRef = ProjectSource(
+                kind = kind,
+                path = StorageAccess.fileFor(app, first)?.absolutePath,
+                uri = first.takeIf { StorageAccess.fileFor(app, it) == null }?.also(::persistRead)?.toString(),
+                fileName = SourceFiles.displayName(app, first) ?: first.lastPathSegment.orEmpty(),
+            ),
+        ) {
+            val opened = ArrayList<ThemeSource>()
+            try {
+                uris.forEach { uri ->
+                    val file = StorageAccess.fileFor(app, uri)
+                    opened += when {
+                        file != null && kind == SourceKind.ICON_PACK -> IconPackSource.open(app, file)
+                        file != null -> MtzSource.open(app, file)
+                        kind == SourceKind.ICON_PACK -> IconPackSource.open(app, uri)
+                        else -> MtzSource.open(app, uri)
+                    }
+                }
+            } catch (error: Throwable) {
+                opened.forEach { runCatching { it.close() } }
+                throw error
+            }
+            CompositeSource(opened)
         }
     }
 
