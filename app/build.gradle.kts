@@ -11,8 +11,8 @@ android {
         applicationId = "com.nathanhanapps.nebulaThemePorter"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.3.1"
+        versionCode = 6
+        versionName = "1.4.0"
 
         // Nubia/ZTE devices are all arm64; skip bundling other ABIs' native libs.
         ndk {
