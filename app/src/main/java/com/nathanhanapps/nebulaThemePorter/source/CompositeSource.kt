@@ -3,9 +3,10 @@ package com.nathanhanapps.nebulaThemePorter.source
 import com.nathanhanapps.nebulaThemePorter.core.SourceIcon
 
 /**
- * Several sources opened together. The first is the main one: its image ids are kept as they are, so a project
- * saved from it alone still resolves, and its icons come first so the planner (first writer wins) prefers them.
- * Icons from the others are exposed under prefixed ids so the user can pick them by hand in the app list.
+ * Several sources opened together. The first is the main one: its image ids are kept as they are, and its icons
+ * come first so the planner and the automatic matches (first match wins) prefer them. Icons from the others are
+ * exposed under prefixed ids, so they fill apps the main one has no artwork for and can be picked by hand in the
+ * app list. The prefix is the source's position, so a saved project has to reopen its sources in the same order.
  */
 class CompositeSource(private val sources: List<ThemeSource>) : ThemeSource {
     init {
@@ -15,7 +16,8 @@ class CompositeSource(private val sources: List<ThemeSource>) : ThemeSource {
     private val primary = sources.first()
 
     override val kind get() = primary.kind
-    override val fileName: String = sources.joinToString(", ") { it.fileName }
+    override val fileName get() = primary.fileName
+    override val partNames: List<String> = sources.map { it.fileName }
     override val suggestedLabel get() = primary.suggestedLabel
     override val author get() = primary.author
     override val description get() = primary.description
@@ -32,14 +34,12 @@ class CompositeSource(private val sources: List<ThemeSource>) : ThemeSource {
         )
     }
 
+    override fun partOf(imageId: String): Int =
+        PREFIX.matchEntire(imageId)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it in 1 until sources.size } ?: 0
+
     override fun readBytes(imageId: String): ByteArray? {
-        val match = PREFIX.matchEntire(imageId)
-        val index = match?.groupValues?.get(1)?.toIntOrNull()
-        return if (match != null && index != null && index in 1 until sources.size) {
-            sources[index].readBytes(match.groupValues[2])
-        } else {
-            primary.readBytes(imageId)
-        }
+        val index = partOf(imageId)
+        return if (index == 0) primary.readBytes(imageId) else sources[index].readBytes(imageId.substringAfter('|'))
     }
 
     override fun close() = sources.forEach { runCatching { it.close() } }

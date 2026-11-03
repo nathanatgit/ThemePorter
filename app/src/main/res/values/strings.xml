@@ -24,9 +24,11 @@
     <string name="miui_theme_subtitle">Xiaomi theme · HyperOS</string>
     <string name="miui_theme_detail">Icons, wallpaper, folders, calendar and clock</string>
     <string name="installed_icon_packs">Installed icon packs</string>
-    <string name="installed_icon_packs_detail">Only confirmed icon packs with an appfilter.xml are listed. Selecting one reads its installed APK directly.</string>
+    <string name="installed_icon_packs_detail">Only confirmed icon packs with an appfilter.xml are listed. Selecting one reads its installed APK directly. Long-press to combine several; the first one picked is the main source.</string>
     <string name="detecting_icon_packs">Detecting installed icon packs…</string>
     <string name="no_installed_icon_packs">No launcher-visible installed icon packs with appfilter.xml were found. You can still choose an APK file from the home screen.</string>
+    <string name="main_source">Main: %1$s</string>
+    <string name="extra_sources">Extra: %1$s</string>
     <string name="import_selected">Import (%1$d)</string>
     <string name="refresh">Refresh</string>
     <string name="open_themes_app">Open Themes app</string>
@@ -182,6 +184,8 @@
     <string name="launcher_default">Launcher default</string>
     <string name="cancel">Cancel</string>
     <string name="clear">Clear</string>
+    <string name="all_sources">All</string>
+    <string name="showing_first_icons">Showing the first %1$d of %2$d. Search to narrow them down.</string>
     <string name="search_package_name">Search package name</string>
     <plurals name="available_icons">
         <item quantity="one">%d available icon</item>

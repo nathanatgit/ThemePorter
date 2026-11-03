@@ -42,6 +42,8 @@ data class SavedProject(
     val name: String,
     val savedAt: Long,
     val source: ProjectSource,
+    /** Further packs combined with [source], in import order. Their image ids depend on that order. */
+    val extraSources: List<ProjectSource> = emptyList(),
     val labelZh: String = "",
     val labelEn: String = "",
     val author: String = "",
@@ -105,13 +107,8 @@ class ProjectStore(private val root: File) {
         put("version", VERSION)
         put("name", p.name)
         put("savedAt", p.savedAt)
-        put("source", JSONObject().apply {
-            put("kind", p.source.kind.name)
-            p.source.packageName?.let { put("packageName", it) }
-            p.source.path?.let { put("path", it) }
-            p.source.uri?.let { put("uri", it) }
-            put("fileName", p.source.fileName)
-        })
+        put("source", sourceToJson(p.source))
+        if (p.extraSources.isNotEmpty()) put("extraSources", JSONArray().apply { p.extraSources.forEach { put(sourceToJson(it)) } })
         put("labelZh", p.labelZh)
         put("labelEn", p.labelEn)
         put("author", p.author)
@@ -132,19 +129,30 @@ class ProjectStore(private val root: File) {
         p.fixedBackgroundName?.let { put("fixedBackgroundName", it) }
     }
 
+    private fun sourceToJson(source: ProjectSource) = JSONObject().apply {
+        put("kind", source.kind.name)
+        source.packageName?.let { put("packageName", it) }
+        source.path?.let { put("path", it) }
+        source.uri?.let { put("uri", it) }
+        put("fileName", source.fileName)
+    }
+
+    private fun sourceFromJson(source: JSONObject) = ProjectSource(
+        kind = runCatching { SourceKind.valueOf(source.getString("kind")) }.getOrDefault(SourceKind.ICON_PACK),
+        packageName = source.optStringOrNull("packageName"),
+        path = source.optStringOrNull("path"),
+        uri = source.optStringOrNull("uri"),
+        fileName = source.optString("fileName", ""),
+    )
+
     private fun fromJson(id: String, json: JSONObject): SavedProject {
-        val source = json.getJSONObject("source")
+        val extras = json.optJSONArray("extraSources")
         return SavedProject(
             id = id,
             name = json.optString("name", id),
             savedAt = json.optLong("savedAt", 0L),
-            source = ProjectSource(
-                kind = runCatching { SourceKind.valueOf(source.getString("kind")) }.getOrDefault(SourceKind.ICON_PACK),
-                packageName = source.optStringOrNull("packageName"),
-                path = source.optStringOrNull("path"),
-                uri = source.optStringOrNull("uri"),
-                fileName = source.optString("fileName", ""),
-            ),
+            source = sourceFromJson(json.getJSONObject("source")),
+            extraSources = (0 until (extras?.length() ?: 0)).mapNotNull { i -> extras?.optJSONObject(i)?.let(::sourceFromJson) },
             labelZh = json.optString("labelZh", ""),
             labelEn = json.optString("labelEn", ""),
             author = json.optString("author", ""),

@@ -74,6 +74,8 @@ enum class Stage { HOME, LOADING, CONFIGURE, BUILDING, DONE, ERROR }
 data class SourceSummary(
     val kind: SourceKind,
     val fileName: String,
+    /** File names of every combined pack, main one first; a single entry when only one was imported. */
+    val partNames: List<String> = listOf(fileName),
     val imageCount: Int,
     val packageCount: Int,
     val installedPackages: Int,
@@ -82,6 +84,8 @@ data class SourceSummary(
     val hasWallpaper: Boolean,
     val hasIconBack: Boolean,
 )
+
+data class IconSearch(val icons: List<SourceIcon>, val total: Int)
 
 data class PorterState(
     val stage: Stage = Stage.HOME,
@@ -176,8 +180,8 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
     private var installedLaunchers: Map<String, List<String>> = emptyMap()
     private val projects = ProjectStore.forApp(application)
 
-    /** How the currently loaded source would be found again, carried into any save of this session. */
-    private var sourceRef: ProjectSource? = null
+    /** How the currently loaded sources would be found again, main one first, carried into any save of this session. */
+    private var sourceRefs: List<ProjectSource> = emptyList()
 
     init {
         refreshProjects()
@@ -193,59 +197,25 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
         mutableState.update { it.copy(lastCrash = null) }
     }
 
-    /** From the system file picker. Files on this phone's storage are read in place; anything else is copied first. */
-    fun open(kind: SourceKind, uri: Uri) = load(
+    /**
+     * From the system file picker, one file or several. The first is the main source and the rest are extra icon
+     * choices. Files on this phone's storage are read in place; anything else is copied first.
+     */
+    fun open(kind: SourceKind, uris: List<Uri>) {
+        if (uris.isEmpty()) return
         // Without All-files access a picked document is only reachable through its Uri, and that grant dies
         // with the process - so a project saved from it would be unopenable on next launch. Ask for the
         // persistable one here, while the picker's grant is still live.
-        sourceRef = ProjectSource(
-            kind = kind,
-            path = StorageAccess.fileFor(app, uri)?.absolutePath,
-            uri = uri.takeIf { StorageAccess.fileFor(app, it) == null }?.also(::persistRead)?.toString(),
-            fileName = SourceFiles.displayName(app, uri) ?: uri.lastPathSegment.orEmpty(),
-        ),
-    ) {
-        val file = StorageAccess.fileFor(app, uri)
-        when {
-            file != null && kind == SourceKind.ICON_PACK -> IconPackSource.open(app, file)
-            file != null -> MtzSource.open(app, file)
-            kind == SourceKind.ICON_PACK -> IconPackSource.open(app, uri)
-            else -> MtzSource.open(app, uri)
-        }
-    }
-
-    /** Multi-select from the picker: the first file is the main source, the rest are extra icon choices. */
-    fun open(kind: SourceKind, uris: List<Uri>) {
-        if (uris.size <= 1) {
-            uris.firstOrNull()?.let { open(kind, it) }
-            return
-        }
-        val first = uris.first()
-        load(
-            sourceRef = ProjectSource(
+        val refs = uris.map { uri ->
+            val file = StorageAccess.fileFor(app, uri)
+            ProjectSource(
                 kind = kind,
-                path = StorageAccess.fileFor(app, first)?.absolutePath,
-                uri = first.takeIf { StorageAccess.fileFor(app, it) == null }?.also(::persistRead)?.toString(),
-                fileName = SourceFiles.displayName(app, first) ?: first.lastPathSegment.orEmpty(),
-            ),
-        ) {
-            val opened = ArrayList<ThemeSource>()
-            try {
-                uris.forEach { uri ->
-                    val file = StorageAccess.fileFor(app, uri)
-                    opened += when {
-                        file != null && kind == SourceKind.ICON_PACK -> IconPackSource.open(app, file)
-                        file != null -> MtzSource.open(app, file)
-                        kind == SourceKind.ICON_PACK -> IconPackSource.open(app, uri)
-                        else -> MtzSource.open(app, uri)
-                    }
-                }
-            } catch (error: Throwable) {
-                opened.forEach { runCatching { it.close() } }
-                throw error
-            }
-            CompositeSource(opened)
+                path = file?.absolutePath,
+                uri = uri.takeIf { file == null }?.also(::persistRead)?.toString(),
+                fileName = SourceFiles.displayName(app, uri) ?: uri.lastPathSegment.orEmpty(),
+            )
         }
+        load(refs) { openAll(refs.map { ref -> suspend { openRef(ref) } }) }
     }
 
     fun loadInstalledIconPacks() {
@@ -266,22 +236,38 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
 
     /** The first pack is the main source; the rest are extra icon choices. */
     fun openInstalledIconPacks(iconPacks: List<InstalledApps.IconPack>) {
-        val main = iconPacks.firstOrNull() ?: return
-        load(
-            sourceRef = ProjectSource(
-                kind = SourceKind.ICON_PACK,
-                packageName = main.packageName,
-                fileName = main.label,
-            ),
-        ) {
-            val opened = ArrayList<ThemeSource>()
-            try {
-                iconPacks.forEach { opened += IconPackSource.open(app, File(it.apkPath)) }
-            } catch (error: Throwable) {
-                opened.forEach { runCatching { it.close() } }
-                throw error
-            }
-            if (opened.size == 1) opened.first() else CompositeSource(opened)
+        if (iconPacks.isEmpty()) return
+        val refs = iconPacks.map { ProjectSource(kind = SourceKind.ICON_PACK, packageName = it.packageName, fileName = it.label) }
+        load(refs) { openAll(iconPacks.map { pack -> suspend { IconPackSource.open(app, File(pack.apkPath)) } }) }
+    }
+
+    /** Opens each source in turn, closing the ones already open if a later one fails. */
+    private suspend fun openAll(openers: List<suspend () -> ThemeSource>): ThemeSource {
+        val opened = ArrayList<ThemeSource>()
+        try {
+            openers.forEach { opened += it() }
+        } catch (error: Throwable) {
+            opened.forEach { runCatching { it.close() } }
+            throw error
+        }
+        return opened.singleOrNull() ?: CompositeSource(opened)
+    }
+
+    /** Finds a source again from how it was recorded: installed package, path on this phone, or a granted Uri. */
+    private suspend fun openRef(ref: ProjectSource, installedPacks: () -> List<InstalledApps.IconPack> = { InstalledApps.iconPacks(app) }): ThemeSource {
+        val missing = { IllegalStateException(app.getString(R.string.project_source_missing, ref.fileName)) }
+        val file = when {
+            ref.packageName != null -> installedPacks().firstOrNull { it.packageName == ref.packageName }
+                ?.let { File(it.apkPath) } ?: throw missing()
+            ref.path != null -> File(ref.path).takeIf(File::exists) ?: throw missing()
+            else -> null
+        }
+        return when {
+            file != null && ref.kind == SourceKind.ICON_PACK -> IconPackSource.open(app, file)
+            file != null -> MtzSource.open(app, file)
+            ref.uri == null -> throw missing()
+            ref.kind == SourceKind.ICON_PACK -> IconPackSource.open(app, Uri.parse(ref.uri))
+            else -> MtzSource.open(app, Uri.parse(ref.uri))
         }
     }
 
@@ -532,7 +518,10 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }.onSuccess { apps ->
                 val sourceIcons = source?.icons.orEmpty()
-                val exact = sourceIcons.mapNotNull { icon -> icon.component?.className?.let { icon.component.stem to icon.id } }.toMap()
+                // First match wins, as in the planner: a later duplicate (another drawable for the same activity,
+                // or the same app in an extra pack) must not override what the build will actually write.
+                val exact = HashMap<String, String>()
+                sourceIcons.forEach { icon -> icon.component?.takeIf { it.className != null }?.let { exact.putIfAbsent(it.stem, icon.id) } }
                 val packages = sourceIcons.groupBy { it.component?.packageName ?: it.key }
                 val suggestions = apps.mapNotNull { launcher ->
                     (exact[launcher.stem] ?: packages[launcher.packageName]?.firstOrNull()?.id)?.let { launcher.stem to it }
@@ -660,10 +649,20 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
 
     fun consumeError() = mutableState.update { it.copy(error = null) }
 
-    fun searchIcons(query: String): List<SourceIcon> {
-        val icons = source?.icons.orEmpty().distinctBy { it.key to it.id }
+    /**
+     * Icons matching [query], from one pack when [part] is an index into [SourceSummary.partNames] or from all of
+     * them otherwise. At most [limit] are returned, with [IconSearch.total] the full count, because a big pack has
+     * thousands and the grid only needs enough to scroll through before the user narrows it down.
+     */
+    fun searchIcons(query: String, part: Int? = null, limit: Int = 900): IconSearch {
+        val active = source ?: return IconSearch(emptyList(), 0)
         val trimmed = query.trim()
-        return (if (trimmed.isEmpty()) icons else icons.filter { it.key.contains(trimmed, ignoreCase = true) }).take(900)
+        val matches = active.icons.asSequence()
+            .filter { part == null || active.partOf(it.id) == part }
+            .filter { trimmed.isEmpty() || it.key.contains(trimmed, ignoreCase = true) }
+            .distinctBy { it.key to it.id }
+            .toList()
+        return IconSearch(matches.take(limit), matches.size)
     }
 
     fun iconKey(sourceId: String): String? = source?.icons?.firstOrNull { it.id == sourceId }?.key
@@ -756,12 +755,16 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         synchronized(thumbnails) { thumbnails.get(cacheKey) }?.let { return it }
+        // Image ids repeat between sources (every MTZ has "i:icons/..." entries), so a decode still in flight when
+        // the source is swapped must not land in the cache the new source reads from.
+        val active = source
+        fun cache(key: String, bitmap: Bitmap) = synchronized(thumbnails) { if (source === active) thumbnails.put(key, bitmap) }
         val base = synchronized(thumbnails) { thumbnails.get(baseKey) } ?: withContext(Dispatchers.IO) {
             runCatching {
                 if (isDeviceIcon) InstalledApps.decodeIcon(app, imageId, 128, ownBackground)
-                else source?.decode(imageId, 128)
+                else active?.decode(imageId, 128)
             }.getOrNull()
-        }?.also { synchronized(thumbnails) { thumbnails.put(baseKey, it) } } ?: return null
+        }?.also { cache(baseKey, it) } ?: return null
         if (tintColor == null && curve.isIdentity && shaped == null) return base
         val curveLut = if (curve.isIdentity) null else curve.lut()
         val prepared = if (shaped != null) {
@@ -795,7 +798,7 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
                 } ?: curved
             }
         }
-        synchronized(thumbnails) { thumbnails.put(cacheKey, prepared) }
+        cache(cacheKey, prepared)
         return prepared
     }
 
@@ -895,17 +898,17 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * [sourceRef] records how this source could be reopened later; [restore] replays a saved project's tweaks
+     * [sourceRefs] record how the sources could be reopened later; [restore] replays a saved project's tweaks
      * over the freshly read source once it has loaded, which is what makes reopening a project cheap - the pack
      * is re-read from disk, but nothing the user decided about it has to be redone.
      */
-    private fun load(sourceRef: ProjectSource?, restore: SavedProject? = null, opener: suspend () -> ThemeSource) {
+    private fun load(sourceRefs: List<ProjectSource>, restore: SavedProject? = null, opener: suspend () -> ThemeSource) {
         closeSource()
         wallpaperFile?.delete()
         wallpaperFile = null
         fixedBackgroundFile?.delete()
         fixedBackgroundFile = null
-        this.sourceRef = sourceRef
+        this.sourceRefs = sourceRefs
         val base = baseState(mutableState.value)
         mutableState.value = base.copy(stage = Stage.LOADING)
         viewModelScope.launch {
@@ -931,6 +934,7 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
                     summary = SourceSummary(
                         kind = opened.kind,
                         fileName = opened.fileName,
+                        partNames = opened.partNames,
                         imageCount = opened.icons.map { it.id }.toSet().size,
                         packageCount = packages.size,
                         installedPackages = packages.count { it in installed },
@@ -1061,7 +1065,8 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun saveProject(notify: Boolean = true) {
         val current = mutableState.value
-        val ref = sourceRef ?: return
+        val ref = sourceRefs.firstOrNull() ?: return
+        val extraRefs = sourceRefs.drop(1)
         viewModelScope.launch {
             val id = current.currentProjectId ?: projects.newId()
             val project = SavedProject(
@@ -1069,6 +1074,7 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
                 name = current.labelZh.ifBlank { current.labelEn }.ifBlank { ref.fileName },
                 savedAt = System.currentTimeMillis(),
                 source = ref,
+                extraSources = extraRefs,
                 labelZh = current.labelZh,
                 labelEn = current.labelEn,
                 author = current.author,
@@ -1105,23 +1111,11 @@ class PorterViewModel(application: Application) : AndroidViewModel(application) 
      * Configure screen acts on rather than being started here.
      */
     fun openProject(project: SavedProject, build: Boolean = false) {
-        val ref = project.source
-        load(sourceRef = ref, restore = project) {
-            val file = when {
-                ref.packageName != null -> InstalledApps.iconPacks(app).firstOrNull { it.packageName == ref.packageName }
-                    ?.let { File(it.apkPath) }
-                    ?: throw IllegalStateException(app.getString(R.string.project_source_missing, ref.fileName))
-                ref.path != null -> File(ref.path).takeIf(File::exists)
-                    ?: throw IllegalStateException(app.getString(R.string.project_source_missing, ref.fileName))
-                else -> null
-            }
-            when {
-                file != null && ref.kind == SourceKind.ICON_PACK -> IconPackSource.open(app, file)
-                file != null -> MtzSource.open(app, file)
-                ref.uri == null -> throw IllegalStateException(app.getString(R.string.project_source_missing, ref.fileName))
-                ref.kind == SourceKind.ICON_PACK -> IconPackSource.open(app, Uri.parse(ref.uri))
-                else -> MtzSource.open(app, Uri.parse(ref.uri))
-            }
+        val refs = listOf(project.source) + project.extraSources
+        load(sourceRefs = refs, restore = project) {
+            // Scanning for installed icon packs probes every launcher app's APK, so do it once for all of them.
+            val installed by lazy { InstalledApps.iconPacks(app) }
+            openAll(refs.map { ref -> suspend { openRef(ref) { installed } } })
         }
         if (build) mutableState.update { it.copy(pendingBuild = true) }
     }

@@ -62,6 +62,12 @@ interface ThemeSource : Closeable {
     val icons: List<SourceIcon>
     val extras: SourceExtras
 
+    /** File names of the packs this source is made of, main one first. One entry unless several were combined. */
+    val partNames: List<String> get() = listOf(fileName)
+
+    /** Index into [partNames] of the pack [imageId] comes from. */
+    fun partOf(imageId: String): Int = 0
+
     fun readBytes(imageId: String): ByteArray?
 
     fun decode(imageId: String, maxSize: Int): Bitmap? = readBytes(imageId)?.let { Bitmaps.decode(it, maxSize) }

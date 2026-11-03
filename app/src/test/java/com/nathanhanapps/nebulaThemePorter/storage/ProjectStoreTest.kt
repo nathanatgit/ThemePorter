@@ -83,6 +83,30 @@ class ProjectStoreTest {
     }
 
     @Test
+    fun `round trips combined sources in import order`() {
+        val store = store()
+        val extras = listOf(
+            ProjectSource(kind = SourceKind.MTZ, uri = "content://picked/second.mtz", fileName = "second.mtz"),
+            ProjectSource(kind = SourceKind.MTZ, path = "/sdcard/Download/third.mtz", fileName = "third.mtz"),
+        )
+        store.write(sample().copy(extraSources = extras, userAssignments = mapOf("com_example-Main" to "src2|i:x.png")))
+
+        val read = requireNotNull(store.read("p1"))
+        assertEquals(extras, read.extraSources)
+        assertEquals("src2|i:x.png", read.userAssignments["com_example-Main"])
+    }
+
+    @Test
+    fun `project saved before combined sources has none`() {
+        val store = store()
+        store.write(sample())
+        val json = JSONObject(File(store.dir("p1"), "project.json").readText())
+
+        assertTrue(!json.has("extraSources"))
+        assertTrue(requireNotNull(store.read("p1")).extraSources.isEmpty())
+    }
+
+    @Test
     fun `keeps curve control points exactly`() {
         val store = store()
         store.write(sample())

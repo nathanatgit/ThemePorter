@@ -24,9 +24,11 @@
     <string name="miui_theme_subtitle">小米主题 · HyperOS</string>
     <string name="miui_theme_detail">图标、壁纸、文件夹、日历和时钟</string>
     <string name="installed_icon_packs">已安装的图标包</string>
-    <string name="installed_icon_packs_detail">仅列出确认包含 appfilter.xml 的图标包。选择后将直接读取其已安装 APK。</string>
+    <string name="installed_icon_packs_detail">仅列出确认包含 appfilter.xml 的图标包。选择后将直接读取其已安装 APK。长按可组合多个，第一个选中的为主来源。</string>
     <string name="detecting_icon_packs">正在检测已安装的图标包…</string>
     <string name="no_installed_icon_packs">未找到启动器可见且包含 appfilter.xml 的已安装图标包。仍可从主页选择 APK 文件。</string>
+    <string name="main_source">主来源：%1$s</string>
+    <string name="extra_sources">额外：%1$s</string>
     <string name="import_selected">导入（%1$d）</string>
     <string name="refresh">刷新</string>
     <string name="open_themes_app">打开主题应用</string>
@@ -176,6 +178,8 @@
     <string name="launcher_default">启动器默认图标</string>
     <string name="cancel">取消</string>
     <string name="clear">清除</string>
+    <string name="all_sources">全部</string>
+    <string name="showing_first_icons">显示前 %1$d 个，共 %2$d 个。可搜索以缩小范围。</string>
     <string name="search_package_name">搜索软件包名称</string>
     <plurals name="available_icons">
         <item quantity="other">%d 个可用图标</item>

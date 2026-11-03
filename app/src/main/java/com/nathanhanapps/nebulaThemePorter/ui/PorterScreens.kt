@@ -595,11 +595,18 @@ private fun InstalledIconPackDialog(
     fun toggle(pack: InstalledApps.IconPack) {
         selected = if (pack.packageName in selected) selected - pack.packageName else selected + pack.packageName
     }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    // Back leaves selection mode first, the way it does on the configure screen's app grids.
+    Dialog(onDismissRequest = { if (selecting) selected = emptyList() else onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxSize().safeDrawingPadding()) {
                 TopAppBar(
-                    title = { Text(stringResource(R.string.installed_icon_packs), style = MaterialTheme.typography.titleLarge) },
+                    title = {
+                        Text(
+                            if (selecting) pluralStringResource(R.plurals.icons_selected_count, selected.size, selected.size)
+                            else stringResource(R.string.installed_icon_packs),
+                            style = MaterialTheme.typography.titleLarge,
+                        )
+                    },
                     navigationIcon = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
                     actions = {
                         if (selecting) {
@@ -802,7 +809,12 @@ private fun ConfigureScreen(
                     } else {
                         Column {
                             Text(stringResource(R.string.customize_theme), style = MaterialTheme.typography.titleLarge)
-                            Text(summary.fileName, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                if (summary.partNames.size > 1) "${summary.fileName} +${summary.partNames.size - 1}" else summary.fileName,
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                         }
                     }
                 },
@@ -1336,6 +1348,12 @@ private fun SummaryCard(summary: SourceSummary) {
             )
             Text(pluralStringResource(R.plurals.image_count, summary.imageCount, summary.imageCount), style = MaterialTheme.typography.headlineSmall)
             Text(pluralStringResource(R.plurals.package_count, summary.packageCount, summary.packageCount), style = MaterialTheme.typography.bodyMedium)
+            if (summary.partNames.size > 1) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(stringResource(R.string.main_source, summary.partNames.first()), style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.extra_sources, summary.partNames.drop(1).joinToString(", ")), style = MaterialTheme.typography.bodySmall)
+                }
+            }
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Feature(stringResource(R.string.calendar), summary.hasCalendar)
                 Feature(stringResource(R.string.clock), summary.hasClock)
@@ -2154,7 +2172,12 @@ private fun IconPickerDialog(
     fixedOptions: BuildOptions? = null,
 ) {
     var query by remember { mutableStateOf("") }
-    val icons = remember(query) { viewModel.searchIcons(query) }
+    val partNames = viewModel.state.collectAsStateWithLifecycle().value.summary?.partNames.orEmpty()
+    // Null shows every pack. The main pack's icons come first, so without this a big main pack would fill the
+    // whole capped list and an extra pack's icons could only be reached by searching for them.
+    var part by remember { mutableStateOf<Int?>(null) }
+    val search = remember(query, part) { viewModel.searchIcons(query, part) }
+    val icons = search.icons
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxSize().safeDrawingPadding()) {
@@ -2181,8 +2204,27 @@ private fun IconPickerDialog(
                     singleLine = true,
                     shape = MaterialTheme.shapes.large,
                 )
+                if (partNames.size > 1) {
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FilterChip(selected = part == null, onClick = { part = null }, label = { Text(stringResource(R.string.all_sources)) })
+                        partNames.forEachIndexed { index, name ->
+                            FilterChip(
+                                selected = part == index,
+                                onClick = { part = index },
+                                label = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp)) },
+                            )
+                        }
+                    }
+                }
                 Text(
-                    pluralStringResource(R.plurals.available_icons, icons.size, icons.size),
+                    if (search.total > icons.size) {
+                        stringResource(R.string.showing_first_icons, icons.size, search.total)
+                    } else {
+                        pluralStringResource(R.plurals.available_icons, search.total, search.total)
+                    },
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
