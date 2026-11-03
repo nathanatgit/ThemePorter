@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  # Releases the commit it is run on, creating the tag on GitHub, for when a tag can't be pushed directly.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to create and release, e.g. v1.4"
+        required: true
 
 permissions:
   contents: write
@@ -11,7 +17,22 @@ permissions:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
     steps:
+      - name: Check tag name
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "$TAG" in
+            v*) ;;
+            *) echo "Tag must start with v, got: $TAG"; exit 1 ;;
+          esac
+          # A manual run builds the commit it runs on, so it must not attach that build to an existing tag.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && gh api "repos/${{ github.repository }}/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists"; exit 1
+          fi
+
       - name: Check out repository
         uses: actions/checkout@v4
 
@@ -42,15 +63,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          notes="docs/release-notes/${{ github.ref_name }}.md"
+          # --target only applies when the tag doesn't exist yet, i.e. a manual run.
+          notes="docs/release-notes/$TAG.md"
           if [ -f "$notes" ]; then
-            gh release create "${{ github.ref_name }}" \
+            gh release create "$TAG" \
               app/build/outputs/apk/release/app-release.apk \
-              --title "${{ github.ref_name }}" \
+              --target "${{ github.sha }}" \
+              --title "$TAG" \
               --notes-file "$notes"
           else
-            gh release create "${{ github.ref_name }}" \
+            gh release create "$TAG" \
               app/build/outputs/apk/release/app-release.apk \
-              --title "${{ github.ref_name }}" \
+              --target "${{ github.sha }}" \
+              --title "$TAG" \
               --generate-notes
           fi
