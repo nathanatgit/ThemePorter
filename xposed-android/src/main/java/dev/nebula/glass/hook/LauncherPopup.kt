@@ -110,7 +110,27 @@ class LauncherPopup : IXposedHookLoadPackage {
                 back
             }
         }
+        tintArrow(popup, night)
         Log.i(TAG, "popup glass on ${panels.size} panels style=$style night=$night")
+    }
+
+    /**
+     * The arrow is a small plain View child of the popup (stock paints it white). A layer paint with a
+     * SRC_IN colour filter recolours whatever it draws and keeps its alpha, so the arrow's own
+     * drawable class does not matter. Uses the glass body tint so arrow and panel read as one.
+     */
+    private fun tintArrow(popup: ViewGroup, night: Boolean) {
+        val dp = popup.resources.displayMetrics.density
+        val tint = if (night) 0xFF2A2A2E.toInt() else 0xFFF7F7F9.toInt()
+        for (i in 0 until popup.childCount) {
+            val c = popup.getChildAt(i)
+            if (c is ViewGroup || c.background == null || c.width == 0) continue
+            if (c.width > 40 * dp || c.height > 40 * dp) continue
+            c.setLayerType(View.LAYER_TYPE_HARDWARE, android.graphics.Paint().apply {
+                colorFilter = android.graphics.PorterDuffColorFilter(tint, android.graphics.PorterDuff.Mode.SRC_IN)
+            })
+            Log.i(TAG, "popup arrow tinted ${c.javaClass.name} ${c.width}x${c.height}")
+        }
     }
 
     /** Rows inside a panel lose their opaque GradientDrawable fill; RippleDrawables are kept. */
