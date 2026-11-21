@@ -1,0 +1,23 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+ <!-- Live settings broadcasts to SystemUI and the launcher: only this app may send them. -->
+ <permission android:name="com.nathanhanapps.nebulaColorize.permission.SETTINGS" android:protectionLevel="signature"/>
+ <uses-permission android:name="com.nathanhanapps.nebulaColorize.permission.SETTINGS"/>
+ <!-- Optional, user-granted: Android only lets apps with all-files access read the wallpaper image (ink picker). -->
+ <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
+ <application android:label="nebulaColorize" android:allowBackup="false">
+  <meta-data android:name="xposedmodule" android:value="true"/>
+  <meta-data android:name="xposeddescription" android:value="ColorOS-style Liquid Glass for the Nubia launcher and lock screen"/>
+  <meta-data android:name="xposedminversion" android:value="82"/>
+  <meta-data android:name="xposedscope" android:resource="@array/scope"/>
+  <!-- Lets the app write MODE_WORLD_READABLE prefs that Vector serves to the hooks (XSharedPreferences). -->
+  <meta-data android:name="xposedsharedprefs" android:value="true"/>
+  <activity android:name="dev.nebula.glass.ui.SettingsActivity" android:exported="true"
+      android:label="nebulaColorize" android:configChanges="orientation|screenSize">
+   <intent-filter>
+    <action android:name="android.intent.action.MAIN"/>
+    <category android:name="android.intent.category.LAUNCHER"/>
+    <category android:name="de.robv.android.xposed.category.MODULE_SETTINGS"/>
+   </intent-filter>
+  </activity>
+ </application>
+</manifest>

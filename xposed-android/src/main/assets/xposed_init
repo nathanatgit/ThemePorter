@@ -1,0 +1,12 @@
+dev.nebula.glass.hook.LauncherDock
+dev.nebula.glass.hook.LauncherFolders
+dev.nebula.glass.hook.LauncherPopup
+dev.nebula.glass.hook.LauncherWidgets
+dev.nebula.glass.hook.KeyguardGlass
+dev.nebula.glass.hook.SystemUiPanels
+dev.nebula.glass.hook.KeyguardText
+dev.nebula.glass.hook.LauncherClock
+dev.nebula.glass.hook.LauncherTrace
+dev.nebula.glass.hook.KeyguardTrace
+dev.nebula.glass.hook.BoardTrace
+dev.nebula.glass.hook.BoardGlass

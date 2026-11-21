@@ -1,0 +1,4 @@
+Lock-screen glass clock, retired 2026-11-20 (user decision: launcher glass only).
+Not compiled. ClockHook/Editor/ResizeHandle/Glass/Backdrop/Options were the dev.nebula.clock module;
+GlassText.kt + TextSdf.kt were moved back to src/main on 2026-11-20 (lock-screen clock and date text glass is back in scope).
+Manifest, xposed_init and scope.xml are the old module config.
