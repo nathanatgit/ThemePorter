@@ -132,14 +132,14 @@ class InkPicker(ctx: Context, private val image: Bitmap, initial: Int?,
         hex.setTextColor(Color.WHITE); hex.textSize = 15f
         hex.setPadding((12 * dp).toInt(), 0, (12 * dp).toInt(), 0)
         bar.addView(hex, LinearLayout.LayoutParams(0, -2, 1f))
-        bar.addView(pill("Cancel", 0x33FFFFFF) { onDone(null) })
+        bar.addView(pill(L("Cancel"), 0x33FFFFFF) { onDone(null) })
         bar.addView(View(ctx), LinearLayout.LayoutParams((8 * dp).toInt(), 1))
-        bar.addView(pill("Use colour", 0xFF0A84FF.toInt()) { onDone(picked) })
+        bar.addView(pill(L("Use colour"), 0xFF0A84FF.toInt()) { onDone(picked) })
         addView(bar, LayoutParams(-1, -2, Gravity.BOTTOM).apply {
             setMargins((16 * dp).toInt(), 0, (16 * dp).toInt(), (40 * dp).toInt())
         })
         val hint = TextView(ctx).apply {
-            text = "Drag to pick a colour from your lock-screen wallpaper"
+            text = L("Drag to pick a colour from your lock-screen wallpaper")
             setTextColor(Color.WHITE); textSize = 14f; gravity = Gravity.CENTER
             setShadowLayer(6 * dp, 0f, 0f, Color.BLACK)
         }
@@ -214,6 +214,6 @@ class InkPicker(ctx: Context, private val image: Bitmap, initial: Int?,
     private fun updateChip() {
         val c = picked
         (chip.background as GradientDrawable).setColor(c ?: Color.TRANSPARENT)
-        hex.text = if (c == null) "Touch the wallpaper" else Palette.hex(c)
+        hex.text = if (c == null) L("Touch the wallpaper") else Palette.hex(c)
     }
 }

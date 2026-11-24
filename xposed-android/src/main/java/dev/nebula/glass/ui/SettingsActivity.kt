@@ -117,7 +117,7 @@ class SettingsActivity : Activity() {
         }
 
         val bar = pane(32f)
-        tabs = GlassTabs(this, theme, listOf(R.drawable.ic_drop to "Glass", R.drawable.ic_grid to "Apply to")) { showTab(it, animate = true) }
+        tabs = GlassTabs(this, theme, listOf(R.drawable.ic_drop to L("Glass"), R.drawable.ic_grid to L("Apply to"))) { showTab(it, animate = true) }
         bindings.add { tabs.recolour() }
         bar.addView(tabs, LinearLayout.LayoutParams(-1, -1))
         screen.addView(bar, FrameLayout.LayoutParams(px(240), px(64), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = px(12) })
@@ -143,7 +143,7 @@ class SettingsActivity : Activity() {
             setPadding(px(16), 0, px(16), 0)
             setOnClickListener { chooseScope() }
         }
-        page.addView(header("Liquid Glass", scopeChip))
+        page.addView(header(L("Liquid Glass"), scopeChip))
 
         stage = PreviewStage(this, ::previewStyle, { wallpaper }) { s -> previewPicked(s) }
         stage.show(scope)
@@ -173,11 +173,11 @@ class SettingsActivity : Activity() {
     /** A panel's "Follow all surfaces" switch (user request 2026-11-24). */
     private fun followCard(): View {
         val card = pane(28f).apply { setPadding(0, px(4), 0, px(4)) }
-        card.addView(toggle("Follow all surfaces", { scope?.let { store.follows(it) } ?: true }) { on ->
+        card.addView(toggle(L("Follow all surfaces"), { scope?.let { store.follows(it) } ?: true }) { on ->
             scope?.let { store.setFollow(it, on) }
             sync()
         })
-        val note = text("Uses the All surfaces look. Switch off to tune this one on its own.", 13f, theme.inkSoft)
+        val note = text(L("Uses the All surfaces look. Switch off to tune this one on its own."), 13f, theme.inkSoft)
             .apply { setPadding(px(20), 0, px(20), px(10)) }
         card.addView(note)
         bindings.add {
@@ -246,34 +246,34 @@ class SettingsActivity : Activity() {
     }
 
     private fun cornerText(p: Int) = when (val v = sliderToCorner(p)) {
-        GlassStyle.ORIGINAL -> "Nubia's"
-        Shapes.PILL -> "Pill"
+        GlassStyle.ORIGINAL -> L("Nubia's")
+        Shapes.PILL -> L("Pill")
         else -> "$v dp"
     }
 
     /** Folder and dock shapes with the shared look; tile corners with the control centre (user request 2026-11-24). */
     private fun shapesCard(): View {
         val card = pane(28f).apply { setPadding(px(16), px(10), px(10), px(10)) }
-        val title = text("Shapes", 14f, theme.inkSoft)
+        val title = text(L("Shapes"), 14f, theme.inkSoft)
         card.addView(title)
         val home = { scope == null }
         val corners = Shapes.MAX_CORNER + 2
-        valueRow(card, "Folder corner", corners, 0, home, { cornerToSlider(store.shapes.folderCorner) }, ::cornerText) {
+        valueRow(card, L("Folder corner"), corners, 0, home, { cornerToSlider(store.shapes.folderCorner) }, ::cornerText) {
             store.setShapes(store.shapes.copy(folderCorner = sliderToCorner(it)))
         }
-        valueRow(card, "Tile corner", corners, 0, { scope == Surface.CONTROL_CENTER },
+        valueRow(card, L("Tile corner"), corners, 0, { scope == Surface.CONTROL_CENTER },
             { cornerToSlider(store.shapes.tileCorner) }, ::cornerText) {
             store.setShapes(store.shapes.copy(tileCorner = sliderToCorner(it)))
         }
-        valueRow(card, "Dock width", 100 - Shapes.MIN_DOCK_WIDTH, 100 - Shapes.MIN_DOCK_WIDTH, home,
+        valueRow(card, L("Dock width"), 100 - Shapes.MIN_DOCK_WIDTH, 100 - Shapes.MIN_DOCK_WIDTH, home,
             { store.shapes.dockWidth - Shapes.MIN_DOCK_WIDTH }, { "${it + Shapes.MIN_DOCK_WIDTH}%" }) {
             store.setShapes(store.shapes.copy(dockWidth = it + Shapes.MIN_DOCK_WIDTH))
         }
-        valueRow(card, "Dock height", Shapes.MAX_DOCK_PAD, Shapes.DOCK_PAD, home,
+        valueRow(card, L("Dock height"), Shapes.MAX_DOCK_PAD, Shapes.DOCK_PAD, home,
             { store.shapes.dockPad }, { "$it dp around icons" }) {
             store.setShapes(store.shapes.copy(dockPad = it))
         }
-        valueRow(card, "Dock corner", corners, 0, home, { cornerToSlider(store.shapes.dockCorner) }, ::cornerText) {
+        valueRow(card, L("Dock corner"), corners, 0, home, { cornerToSlider(store.shapes.dockCorner) }, ::cornerText) {
             store.setShapes(store.shapes.copy(dockCorner = sliderToCorner(it)))
         }
         bindings.add {
@@ -292,8 +292,8 @@ class SettingsActivity : Activity() {
     private fun styleCard(): View {
         val card = pane(28f).apply { setPadding(px(10), px(10), px(10), px(10)) }
         val choices = LinearLayout(this)
-        val clear = StyleChoice(this, theme, "Clear") { SWATCH_CLEAR }
-        val tinted = StyleChoice(this, theme, "Tinted") { Palette.alpha(colourOf(look()), 0.8f) }
+        val clear = StyleChoice(this, theme, L("Clear")) { SWATCH_CLEAR }
+        val tinted = StyleChoice(this, theme, L("Tinted")) { Palette.alpha(colourOf(look()), 0.8f) }
         clear.setOnClickListener { edit { copy(tinted = false) } }
         tinted.setOnClickListener { edit { copy(tinted = true, color = colourOf(this)) } }
         choices.addView(clear, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = px(6) })
@@ -314,13 +314,13 @@ class SettingsActivity : Activity() {
             val c = Color.HSVToColor(hsv)
             lastHueColour = c
             edit { copy(tinted = true, color = c) }
-        }.apply { contentDescription = "Tint colour" }
+        }.apply { contentDescription = L("Tint colour") }
         colourControls.addView(hue)
 
         val intensity = GlassSlider(this, theme, GlobalStyle.MAX_INTENSITY,
             ramp = { intArrayOf(Color.WHITE, colourOf(look())) }, thumbColour = { colourOf(look()) }) { v ->
             edit { copy(intensity = v) }
-        }.apply { contentDescription = "Tint intensity" }
+        }.apply { contentDescription = L("Tint intensity") }
         colourControls.addView(intensity)
 
         val sources = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(0, px(6), 0, px(2)) }
@@ -336,10 +336,10 @@ class SettingsActivity : Activity() {
             }
             return dot
         }
-        addSource(R.drawable.ic_phone, "System colour") { theme.systemAccent }
-        addSource(R.drawable.ic_image, "Wallpaper colour") { wallpaperColours.getOrNull(0) }
-        addSource(R.drawable.ic_image, "Second wallpaper colour") { wallpaperColours.getOrNull(1) }
-        val dropper = SourceDot(this, theme, R.drawable.ic_dropper, "Pick from the wallpaper or an image") { colourOf(look()) }
+        addSource(R.drawable.ic_phone, L("System colour")) { theme.systemAccent }
+        addSource(R.drawable.ic_image, L("Wallpaper colour")) { wallpaperColours.getOrNull(0) }
+        addSource(R.drawable.ic_image, L("Second wallpaper colour")) { wallpaperColours.getOrNull(1) }
+        val dropper = SourceDot(this, theme, R.drawable.ic_dropper, L("Pick from the wallpaper or an image")) { colourOf(look()) }
         dropper.setOnClickListener { if (wallpaper != null) openInk() else pickImage() }
         sources.addView(dropper, LinearLayout.LayoutParams(px(48), px(48)).apply { marginStart = px(10); marginEnd = px(10) })
         colourControls.addView(sources)
@@ -382,32 +382,32 @@ class SettingsActivity : Activity() {
                 value.text = "$v%"
             }
         }
-        amount("Blur", GlobalStyle.MAX_BLUR, { it.hasBlur }, { it.blur }, { copy(blur = it) })
-        amount("Glow", GlobalStyle.MAX_GLOW, { true }, { it.glow }, { copy(glow = it) })
-        amount("Dim", GlobalStyle.MAX_DIM, { it.hasDim }, { it.dim }, { copy(dim = it) })
+        amount(L("Blur"), GlobalStyle.MAX_BLUR, { it.hasBlur }, { it.blur }, { copy(blur = it) })
+        amount(L("Glow"), GlobalStyle.MAX_GLOW, { true }, { it.glow }, { copy(glow = it) })
+        amount(L("Dim"), GlobalStyle.MAX_DIM, { it.hasDim }, { it.dim }, { copy(dim = it) })
         return card
     }
 
     private fun applyPage(): View {
         val page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        page.addView(header("Apply to"))
+        page.addView(header(L("Apply to")))
         val col = column()
         val areas = pane(28f).apply { setPadding(0, px(6), 0, px(6)) }
         for (area in AREAS) addArea(areas, area)
         col.addView(areas, gapBelow())
 
         val actions = LinearLayout(this)
-        actions.addView(button("Restart apps", R.drawable.ic_restart) {
-            confirm("Restart apps?", "System UI, launcher, lock screen and widget board restart. Needs root; the screen blanks briefly.",
-                "Restart") { restartPackages() }
+        actions.addView(button(L("Restart apps"), R.drawable.ic_restart) {
+            confirm(L("Restart apps?"), L("System UI, launcher, lock screen and widget board restart. Needs root; the screen blanks briefly."),
+                L("Restart")) { restartPackages() }
         }, LinearLayout.LayoutParams(0, px(52), 1f).apply { marginEnd = px(8) })
-        actions.addView(button("Reset look", R.drawable.ic_reset) {
-            confirm("Reset the glass look?", "Clear style with Blur, Glow and Dim at 100 %, for every surface, all following it. Switches and shapes stay as they are.",
-                "Reset") { store.resetGlobal(); setScope(null) }
+        actions.addView(button(L("Reset look"), R.drawable.ic_reset) {
+            confirm(L("Reset the glass look?"), L("Clear style with Blur, Glow and Dim at 100 %, for every surface, all following it. Switches and shapes stay as they are."),
+                L("Reset")) { store.resetGlobal(); setScope(null) }
         }, LinearLayout.LayoutParams(0, px(52), 1f))
         col.addView(actions, gapBelow())
 
-        val access = text("Use my real wallpaper in previews and the eyedropper", 14f).apply {
+        val access = text(L("Use my real wallpaper in previews and the eyedropper"), 14f).apply {
             gravity = Gravity.CENTER
             minimumHeight = px(48)
             setOnClickListener {
@@ -464,16 +464,16 @@ class SettingsActivity : Activity() {
 
     private fun lockLayoutCard(): View {
         val card = pane(28f).apply { setPadding(0, px(6), 0, px(6)) }
-        val title = text("Lock screen layout", 14f, theme.inkSoft).apply { setPadding(px(20), px(4), 0, px(2)) }
+        val title = text(L("Lock screen layout"), 14f, theme.inkSoft).apply { setPadding(px(20), px(4), 0, px(2)) }
         card.addView(title)
         bindings.add {
             card.visibility = if (scope == Surface.LOCK_WIDGET) View.VISIBLE else View.GONE
             title.setTextColor(theme.inkSoft)
         }
-        card.addView(toggle("Widgets and shortcuts at bottom", { store.lock.bottomWidgets }) {
+        card.addView(toggle(L("Widgets and shortcuts at bottom"), { store.lock.bottomWidgets }) {
             store.setLock(store.lock.copy(bottomWidgets = it))
         })
-        card.addView(toggle("Notifications at bottom", { store.lock.bottomNotifications }) {
+        card.addView(toggle(L("Notifications at bottom"), { store.lock.bottomNotifications }) {
             store.setLock(store.lock.copy(bottomNotifications = it))
         })
         val editor = LinearLayout(this).apply {
@@ -483,8 +483,8 @@ class SettingsActivity : Activity() {
             setOnClickListener { openLockEditor() }
         }
         val label = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        label.addView(text("Clock, date and custom text", 16f))
-        label.addView(text("Box size and boldness, in the lock screen editor", 12f, theme.inkSoft))
+        label.addView(text(L("Clock, date and custom text"), 16f))
+        label.addView(text(L("Box size and boldness, in the lock screen editor"), 12f, theme.inkSoft))
         editor.addView(label, LinearLayout.LayoutParams(0, -2, 1f))
         editor.addView(ImageView(this).apply {
             setImageResource(R.drawable.ic_expand)
@@ -492,7 +492,7 @@ class SettingsActivity : Activity() {
             rotation = -90f
         }, LinearLayout.LayoutParams(px(24), px(24)))
         card.addView(editor)
-        val fontNote = text("Clock font: pick it in Nubia's editor (时钟字体). The first font is Roboto Flex, whose width and height axes fill the box. Rubik and Oswald use their variable versions. Fonts without width or height axes keep their proportions.",
+        val fontNote = text(L("Clock font: pick it in Nubia's editor (时钟字体). The first font is Roboto Flex, whose width and height axes fill the box. Rubik and Oswald use their variable versions. Fonts without width or height axes keep their proportions."),
             12f, theme.inkSoft).apply { setPadding(px(20), px(4), px(20), px(10)) }
         card.addView(fontNote)
         bindings.add { fontNote.setTextColor(theme.inkSoft) }
@@ -526,7 +526,7 @@ class SettingsActivity : Activity() {
         try {
             startActivity(Intent().setClassName(SYSTEM_UI, LOCK_SCREENS))
         } catch (_: Exception) {
-            Toast.makeText(this, "Long-press the lock screen to edit it", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, L("Long-press the lock screen to edit it"), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -563,7 +563,7 @@ class SettingsActivity : Activity() {
             }
             val ink = if (s == scope) theme.onContainer else theme.ink
             row.addView(text(scopeName(s), 16f, ink))
-            if (s != null) row.addView(text(if (own) "Own look" else "Follows all surfaces", 12f, if (s == scope) ink else theme.inkSoft))
+            if (s != null) row.addView(text(if (own) L("Own look") else L("Follows all surfaces"), 12f, if (s == scope) ink else theme.inkSoft))
             menu.addView(row, LinearLayout.LayoutParams(-1, px(if (s == null) 48 else 56)))
         }
         val at = IntArray(2)
@@ -585,11 +585,11 @@ class SettingsActivity : Activity() {
     }
 
     private fun scopeName(s: Surface?) = when (s) {
-        Surface.NOTIFICATION -> "Notifications"
-        Surface.CONTROL_CENTER -> "Control centre"
-        Surface.WIDGET_BOARD -> "Widget board"
-        Surface.LOCK_WIDGET -> "Lock screen"
-        else -> "All surfaces"
+        Surface.NOTIFICATION -> L("Notifications")
+        Surface.CONTROL_CENTER -> L("Control centre")
+        Surface.WIDGET_BOARD -> L("Widget board")
+        Surface.LOCK_WIDGET -> L("Lock screen")
+        else -> L("All surfaces")
     }
 
     /** Re-read every control from the settings and recolour the app from the look being edited. */
@@ -623,7 +623,7 @@ class SettingsActivity : Activity() {
                 p.inputStream.readBytes(); p.waitFor() == 0
             } catch (_: Exception) { false }
             runOnUiThread {
-                Toast.makeText(this, if (ok) "Restarted" else "Restart failed: root (su) unavailable", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, if (ok) L("Restarted") else L("Restart failed: root (su) unavailable"), Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -712,7 +712,7 @@ class SettingsActivity : Activity() {
         gravity = Gravity.CENTER_VERTICAL
     }
 
-    private fun banner() = text("Enable nebulaColorize in Vector, then reopen this app.", 14f, 0xFF6B4500.toInt()).apply {
+    private fun banner() = text(L("Enable nebulaColorize in Vector, then reopen this app."), 14f, 0xFF6B4500.toInt()).apply {
         setPadding(px(16), px(10), px(16), px(10))
         background = round(0xFFFFE8B8.toInt(), 20)
     }
@@ -749,12 +749,12 @@ class SettingsActivity : Activity() {
 
         // The dock stays on its own: it is opt-in, so the Home screen switch mustn't turn it on.
         val AREAS = listOf(
-            Area("Home screen", listOf(Surface.FOLDER, Surface.POPUP, Surface.HOME_CLOCK, Surface.HOME_WIDGET)),
-            Area("Dock", listOf(Surface.DOCK)),
-            Area("Widget board", listOf(Surface.WIDGET_BOARD)),
-            Area("Lock screen", listOf(Surface.LOCK_CLOCK, Surface.LOCK_WIDGET, Surface.LOCK_SHORTCUT, Surface.LOCK_CARD)),
-            Area("Notifications", listOf(Surface.NOTIFICATION)),
-            Area("Control centre", listOf(Surface.CONTROL_CENTER)),
+            Area(L("Home screen"), listOf(Surface.FOLDER, Surface.POPUP, Surface.HOME_CLOCK, Surface.HOME_WIDGET)),
+            Area(L("Dock"), listOf(Surface.DOCK)),
+            Area(L("Widget board"), listOf(Surface.WIDGET_BOARD)),
+            Area(L("Lock screen"), listOf(Surface.LOCK_CLOCK, Surface.LOCK_WIDGET, Surface.LOCK_SHORTCUT, Surface.LOCK_CARD)),
+            Area(L("Notifications"), listOf(Surface.NOTIFICATION)),
+            Area(L("Control centre"), listOf(Surface.CONTROL_CENTER)),
         )
         val io = Executors.newSingleThreadExecutor()
     }
