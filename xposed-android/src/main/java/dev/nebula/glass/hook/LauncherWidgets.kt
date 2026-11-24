@@ -64,7 +64,10 @@ class LauncherWidgets : IXposedHookLoadPackage {
     override fun handleLoadPackage(app: XC_LoadPackage.LoadPackageParam) {
         if (app.packageName != LAUNCHER || app.processName != LAUNCHER) return
         HookSettings.load()
-        GlassSettings.addListener { for (h in hosts.keys.toList()) guard { style(h) } }
+        GlassSettings.addListener {
+            for (h in hosts.keys.toList()) guard { style(h) }
+            for (t in inner.values.toList()) t.view.get()?.invalidate()   // their skins are cached draws
+        }
         try {
             XposedHelpers.findAndHookMethod(View::class.java, "onAttachedToWindow", object : XC_MethodHook() {
                 override fun afterHookedMethod(p: MethodHookParam) {
@@ -215,13 +218,10 @@ class LauncherWidgets : IXposedHookLoadPackage {
             fill is GradientDrawable -> fill.cornerRadii?.takeIf { it.size == 8 } ?: GlassSkin.uniform(fill.cornerRadius)
             else -> GlassSkin.uniform(outlineRadius(v) ?: (10 * dp))
         }
-        val base = if (night(v)) 0x38FFFFFF else 0x73FFFFFF
-        val tint = if (st.accent != dev.nebula.glass.GlassStyle.AUTO) {
-            val a = ((st.accent ushr 24) * 6 / 10).coerceAtLeast(0x30)
-            (st.accent and 0xFFFFFF) or (a shl 24)
-        } else base
-        val a = ((tint ushr 24) * st.blur / 100).coerceIn(0, 255)
-        skin.draw(c, skinRect, r, (tint and 0xFFFFFF) or (a shl 24), 0.6f * st.edge / 100f, dp)
+        val base = if (Looks.dark(night(v))) 0x38FFFFFF else 0x73FFFFFF
+        // Inner elements are lighter than the card, whatever the colour.
+        val tint = Looks.body(Surface.HOME_WIDGET, st, night(v), base, INNER_TINT_ALPHA)
+        skin.draw(c, skinRect, r, tint, 0.6f * st.glow, dp)
         return true
     }
 
@@ -310,6 +310,8 @@ class LauncherWidgets : IXposedHookLoadPackage {
         android.content.res.Configuration.UI_MODE_NIGHT_YES
 
     companion object {
+        /** The colour's opacity on an inner element at full intensity. */
+        private const val INNER_TINT_ALPHA = 0x6B
         private const val TAG = "NebulaGlass"
         private const val LAUNCHER = "com.zte.mifavor.launcher"
         private inline fun guard(block: () -> Unit) {

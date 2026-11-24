@@ -30,7 +30,7 @@ import java.util.WeakHashMap
  * sampling [WallpaperBackdrop]. Because the wallpaper does not scroll with the workspace,
  * visible tiles are re-recorded on workspace scroll.
  *
- * Switch: adb shell am broadcast -a com.nathanhanapps.nebulaColorize.FOLDER --es mode glass|stock
+ * Switch: adb shell am broadcast -a com.nathanhanapps.nebulacolorize.FOLDER --es mode glass|stock
  */
 class LauncherFolders : IXposedHookLoadPackage {
     private var sharp: WallpaperBackdrop? = null
@@ -88,9 +88,9 @@ class LauncherFolders : IXposedHookLoadPackage {
         if (d.bounds.isEmpty) return false
         val unified = GlassSettings[Surface.FOLDER]
         if (!unified.enabled) return false
-        // A folder the user coloured in Nubia keeps its own colour over the unified accent.
+        // A folder the user coloured in Nubia keeps its own colour over the shared tint colour.
         val own = folderColor(d)
-        val style = if (own != null) unified.copy(accent = own) else unified
+        val style = if (own != null) unified.copy(look = unified.look.copy(tinted = false)) else unified
         // At 100 % blur the CPU pre-blurred copy is used as is; any other intensity blurs the sharp copy on the GPU.
         val preBlurred = style.blur == 100
         val source = backdrop(host, preBlurred)
@@ -103,7 +103,8 @@ class LauncherFolders : IXposedHookLoadPackage {
         watch(root)
         val lens = lenses.getOrPut(host) { Looks.base(Surface.FOLDER, host.context) }
         val dp = host.resources.displayMetrics.density
-        Looks.style(lens, Surface.FOLDER, dp, 16 * dp, preBlurred = preBlurred, st = style)
+        Looks.style(lens, Surface.FOLDER, dp, 16 * dp, preBlurred = preBlurred, st = style,
+            builtInTint = own ?: Looks.tint(Surface.FOLDER, false))
         rect.set(d.bounds)
         return lens.draw(canvas, host, source, rect)
     }
@@ -201,6 +202,6 @@ class LauncherFolders : IXposedHookLoadPackage {
     companion object {
         private const val TAG = "NebulaGlass"
         private const val LAUNCHER = "com.zte.mifavor.launcher"
-        const val SWITCH = "com.nathanhanapps.nebulaColorize.FOLDER"
+        const val SWITCH = "com.nathanhanapps.nebulacolorize.FOLDER"
     }
 }

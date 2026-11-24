@@ -28,13 +28,14 @@ import java.util.WeakHashMap
  * lock wallpaper bitmap ([WallpaperBackdrop.sharedLock]). Targets:
  *  - widget band: `#widget_background` inside `com.zte.feature.keyguardwidget.KeyguardWidgetContainer`
  *    (Nubia uses BackgroundBlurDrawable / ColorDrawable there; replaced, never stacked)
+ *  - ring-only widgets (screen time, battery) get a glass disc under the ring (user OK 2026-11-23)
  *  - bottom shortcuts: `KeyguardAffordanceView#left_button` / `#camera_button` get a glass circle.
  * Editor previews (`MyDepthLockScreenEditActivity`) are left alone: different window and backdrop.
  *
  * Everything runs inside SystemUI: every hook body is guarded, and the original background is the
  * fallback whenever glass cannot draw.
  *
- * Switch: adb shell am broadcast -a com.nathanhanapps.nebulaColorize.KEYGUARD --es mode glass|stock
+ * Switch: adb shell am broadcast -a com.nathanhanapps.nebulacolorize.KEYGUARD --es mode glass|stock
  * (stock restores the saved original backgrounds immediately).
  */
 class KeyguardGlass : IXposedHookLoadPackage {
@@ -43,17 +44,26 @@ class KeyguardGlass : IXposedHookLoadPackage {
     private val styled: MutableSet<View> = Collections.newSetFromMap(WeakHashMap())
     /** Lock-screen widget background views we watch, glassed or not yet. */
     private val widgets: MutableSet<View> = Collections.newSetFromMap(WeakHashMap())
+    private val shortcuts: MutableSet<View> = Collections.newSetFromMap(WeakHashMap())
     private var switchRegistered = false
     /** Every glass drawable we installed, for live invalidation when settings change. */
     private val glasses = WeakHashMap<View, GlassDrawable>()
 
     override fun handleLoadPackage(app: XC_LoadPackage.LoadPackageParam) {
         if (app.packageName != SYSTEMUI || app.processName != SYSTEMUI) return
+        if (installed) return   // SystemUI calls this twice, the second time with another classloader
+        installed = true
         val widgetContainer = XposedHelpers.findClassIfExists("com.zte.feature.keyguardwidget.KeyguardWidgetContainer", app.classLoader)
         val affordance = XposedHelpers.findClassIfExists("com.android.systemui.statusbar.KeyguardAffordanceView", app.classLoader)
         Log.i(TAG, "keyguard glass: widgetContainer=${widgetContainer != null} affordance=${affordance != null}")
         HookSettings.load()
-        GlassSettings.addListener { for (g in glasses.values.toList()) g.invalidateSelf() }
+        GlassSettings.addListener {
+            for ((v, g) in glasses.entries.toList()) {
+                if (shortcuts.contains(v)) guard { fitShortcut(v, g) }
+                g.invalidateSelf()
+            }
+        }
+        refit = { for ((v, g) in glasses.entries.toList()) if (shortcuts.contains(v)) guard { fitShortcut(v, g) } }
         try {
             XposedHelpers.findAndHookMethod(View::class.java, "onAttachedToWindow", object : XC_MethodHook() {
                 override fun afterHookedMethod(p: MethodHookParam) {
@@ -75,14 +85,15 @@ class KeyguardGlass : IXposedHookLoadPackage {
                     val v = p.thisObject as View
                     val d = p.args[0] as? Drawable
                     if (!enabled || d is GlassDrawable || !widgets.contains(v)) return
-                    if (!isPanel(d)) {
+                    val disc = isBareRing(v, d)
+                    if (!disc && !isPanel(d)) {
                         // Not a panel (e.g. the transparent screen-time background): keep Nubia's shape.
                         styled.remove(v); originals.remove(v); return
                     }
                     try {
                         originals[v] = d
                         styled.add(v)
-                        p.args[0] = widgetGlass(v, d)
+                        p.args[0] = widgetGlass(v, d, disc)
                     } catch (t: Throwable) { Log.e(TAG, "keyguard setBackground", t) }
                 }
             })
@@ -96,15 +107,16 @@ class KeyguardGlass : IXposedHookLoadPackage {
         registerSwitch(v.context.applicationContext)
         if (!enabled || v.background is GlassDrawable) return
         val original = v.background
-        // Only real panels become glass; null/transparent backgrounds wait for Nubia to set one.
-        if (!isPanel(original)) return
-        install(v, original, widgetGlass(v, original))
+        // Panels become glass and bare rings get a disc; other transparent backgrounds wait for Nubia to set one.
+        val disc = isBareRing(v, original)
+        if (!disc && !isPanel(original)) return
+        install(v, original, widgetGlass(v, original, disc))
     }
 
     /** Widget panel glass in Nubia's own shape; user settings (LOCK_WIDGET) are applied per draw. */
-    private fun widgetGlass(v: View, original: Drawable?): GlassDrawable {
+    private fun widgetGlass(v: View, original: Drawable?, disc: Boolean): GlassDrawable {
         val dp = v.resources.displayMetrics.density
-        val corner = cornerOf(original) ?: (20 * dp)
+        val corner = if (disc) 999f else cornerOf(original) ?: (20 * dp)
         return GlassDrawable(v, Looks.base(Surface.LOCK_WIDGET, v.context), original,
             prepare = { Looks.style(it, Surface.LOCK_WIDGET, dp, corner) }) { source(v, Surface.LOCK_WIDGET) }
             .also { glasses[v] = it }
@@ -124,12 +136,31 @@ class KeyguardGlass : IXposedHookLoadPackage {
         }
         val dp = v.resources.displayMetrics.density
         val original = v.background
-        // 202 px touch target; ColorOS-like ~52 dp glass circle centred in it ("Original" = circle).
-        val inset = ((minOf(v.width, v.height) - 52 * dp) / 2f).toInt().coerceAtLeast(0)
         val glass = GlassDrawable(v, Looks.base(Surface.LOCK_SHORTCUT, v.context), null,
             prepare = { Looks.style(it, Surface.LOCK_SHORTCUT, dp, 999f) }) { source(v, Surface.LOCK_SHORTCUT) }
         glasses[v] = glass
-        install(v, original, InsetDrawable(glass, inset))
+        shortcuts.add(v)
+        install(v, original, InsetDrawable(glass, shortcutInset(v)))
+    }
+
+    /** A circle centred in the 202 px touch target, at the shortcut's stock size (user request 2026-11-24). */
+    private fun shortcutInset(v: View): Int =
+        ((minOf(v.width, v.height) - shortcutCircle(v)) / 2f).toInt().coerceAtLeast(0)
+
+    /** The stock circle's diameter: Nubia's own background's size, else 52 dp, as in ColorOS. */
+    private fun shortcutCircle(v: View): Float {
+        val stock = originals[v]?.intrinsicWidth ?: -1
+        val side = minOf(v.width, v.height).toFloat()
+        // The round widgets' size, once [LockArrange] has measured them (user request 2026-11-24).
+        if (shortcutSize > 0f && shortcutSize <= side) return shortcutSize.also { circles[v] = it }
+        return (if (stock > 0 && stock <= side) stock.toFloat() else minOf(side, 52 * v.resources.displayMetrics.density))
+            .also { circles[v] = it }
+    }
+
+    private fun fitShortcut(v: View, glass: GlassDrawable) {
+        if (!enabled || !styled.contains(v) || v.width == 0) return
+        val inset = shortcutInset(v)
+        if (glass.bounds.left != inset) v.background = InsetDrawable(glass, inset)
     }
 
     private fun install(v: View, original: Drawable?, replacement: Drawable) {
@@ -148,6 +179,17 @@ class KeyguardGlass : IXposedHookLoadPackage {
         val root = v.rootView
         if (root.width > 0) b.layoutTo(root.width, root.height)
         return b
+    }
+
+    /** A round widget that is only a progress ring on nothing. */
+    private fun isBareRing(v: View, d: Drawable?): Boolean {
+        val clear = d == null || (d is android.graphics.drawable.ColorDrawable && d.color ushr 24 == 0)
+        return clear && hasRing(v)
+    }
+
+    private fun hasRing(v: View): Boolean {
+        if (v.javaClass.simpleName == "CircularProgressBar") return true
+        return v is android.view.ViewGroup && (0 until v.childCount).any { hasRing(v.getChildAt(it)) }
     }
 
     /** A background that draws a panel: Nubia's blur panel or a rounded/filled shape. */
@@ -207,8 +249,24 @@ class KeyguardGlass : IXposedHookLoadPackage {
 
     companion object {
         private const val TAG = "NebulaGlass"
+        private var installed = false
         private const val SYSTEMUI = "com.android.systemui"
-        const val SWITCH = "com.nathanhanapps.nebulaColorize.KEYGUARD"
+        const val SWITCH = "com.nathanhanapps.nebulacolorize.KEYGUARD"
+
+        /** Each corner shortcut's glass circle diameter, px, for [LockArrange] to align it. */
+        private val circles = java.util.WeakHashMap<View, Float>()
+
+        fun shortcutDiameter(v: View): Float? = circles[v]
+
+        /** The corner shortcuts' circle diameter, px: the round widgets' (0 = stock). */
+        @Volatile private var shortcutSize = 0f
+        private var refit: (() -> Unit)? = null
+
+        fun setShortcutSize(px: Float) {
+            if (kotlin.math.abs(px - shortcutSize) < 1f) return
+            shortcutSize = px
+            refit?.invoke()
+        }
 
         private inline fun guard(block: () -> Unit) {
             try { block() } catch (t: Throwable) { Log.e(TAG, "keyguard", t) }

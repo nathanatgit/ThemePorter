@@ -40,6 +40,65 @@ class GlassLab : Activity() {
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
+        // Test hook: `am start -n <pkg>/dev.nebula.glass.lab.GlassLab --ez headsup true` posts a heads-up.
+        if (intent?.getBooleanExtra("headsup", false) == true) {
+            val nm = getSystemService(android.app.NotificationManager::class.java)
+            nm.createNotificationChannel(android.app.NotificationChannel("lab_headsup", "Glass Lab heads-up",
+                android.app.NotificationManager.IMPORTANCE_HIGH))
+            nm.notify(7, android.app.Notification.Builder(this, "lab_headsup")
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle("Glass test").setContentText("Heads-up glass check").setAutoCancel(true).build())
+            finish()
+            return
+        }
+        // Test hook: `--ez clockfonts true` renders every clock font through ClockFace into one PNG per font
+        // in the app's external files dir: all ten digits and a time, in a short box and a tall one.
+        if (intent?.getBooleanExtra("clockfonts", false) == true) {
+            val faces = ArrayList<Pair<String, (Float, Float, String) -> dev.nebula.glass.ClockFace?>>()
+            val rawFaces = HashMap<String, Typeface>()
+            for (f in dev.nebula.glass.ClockFonts.all) {
+                val loaded = dev.nebula.glass.ClockFonts.load(f.id) ?: continue
+                faces.add(f.id to { h, w, t -> dev.nebula.glass.ClockFace.of(loaded, h, 50, w, t) })
+            }
+            val sysui = try { createPackageContext("com.android.systemui", 0).assets } catch (_: Exception) { null }
+            for (file in listOf("ZzenDots-Regular-01.ttf", "ZrozhaOne-Regular-07-800-260.ttf", "Zrubik-SemiBold-9-03.ttf",
+                    "ZlineDigit-V18.ttf", "Zoswald-Medium-24.ttf")) {
+                val tf = try { Typeface.createFromAsset(sysui, "font/$file") } catch (_: Exception) { null } ?: continue
+                faces.add(file.substringBefore('-') to { h, w, t -> dev.nebula.glass.ClockFace.ofFont(tf, h, 50, w, t, lineFont = file.startsWith("Zline")) })
+                rawFaces[file.substringBefore('-')] = tf
+            }
+            for (name in listOf("zdigit")) {
+                val tf = Typeface.create(Typeface.create(name, Typeface.NORMAL), 400, false)
+                faces.add(name to { h, w, t -> dev.nebula.glass.ClockFace.ofFont(tf, h, 50, w, t) })
+            }
+            val boxW = 1000f
+            for ((name, make) in faces) {
+                val rows = listOf("0123456789" to 240f, "16:69" to 300f, "16:69" to 800f)
+                val bmp = android.graphics.Bitmap.createBitmap(1060, (rows.sumOf { it.second.toDouble() } + 40 * rows.size + 300).toInt(), android.graphics.Bitmap.Config.ARGB_8888)
+                val c = Canvas(bmp)
+                c.drawColor(Color.WHITE)
+                val ink = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
+                val frame = Paint().apply { color = Color.RED; style = Paint.Style.STROKE; strokeWidth = 2f }
+                var y = 20f
+                for ((text, h) in rows) {
+                    c.drawRect(30f, y, 30f + boxW, y + h, frame)
+                    make(h, boxW, text)?.let { face ->
+                        val shape = face.shape(text)
+                        c.save(); c.translate(30f + boxW / 2, y); c.drawPath(shape.path, ink); c.restore()
+                    }
+                    y += h + 40f
+                }
+                // Android's own drawText of the font, for comparison.
+                rawFaces[name]?.let { tf ->
+                    c.drawText("0123456789", 30f, y + 220f, Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = tf; textSize = 240f; color = Color.BLUE })
+                }
+                java.io.File(getExternalFilesDir(null), "clock_$name.png").outputStream().use {
+                    bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+                }
+            }
+            finish()
+            return
+        }
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
         window.statusBarColor = Color.TRANSPARENT
         window.navigationBarColor = Color.TRANSPARENT

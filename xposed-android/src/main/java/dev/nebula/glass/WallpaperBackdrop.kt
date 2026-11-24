@@ -2,6 +2,8 @@ package dev.nebula.glass
 
 import android.app.WallpaperManager
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Matrix
@@ -69,8 +71,22 @@ class WallpaperBackdrop(
         layout(0, 0, width, height)
     }
 
+    private var retries = 0
+    private val unlockReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(c: Context, i: Intent) {
+            // First unlock after boot: credential-encrypted wallpaper storage becomes readable only now.
+            if (bitmap == null && !isLive) { retries = 0; reload() }
+        }
+    }
+
     fun start() {
         try { wm.addOnColorsChangedListener(colorsListener, main) } catch (t: Throwable) { Log.w(TAG, "colors listener", t) }
+        try {
+            val f = IntentFilter().apply {
+                addAction(Intent.ACTION_USER_UNLOCKED); addAction(Intent.ACTION_USER_PRESENT); addAction(Intent.ACTION_SCREEN_ON)
+            }
+            context.registerReceiver(unlockReceiver, f)
+        } catch (t: Throwable) { Log.w(TAG, "unlock receiver", t) }
         reload()
     }
 
@@ -114,6 +130,9 @@ class WallpaperBackdrop(
                 bitmap = result
                 isLive = live
                 changed()
+                // Not readable yet (e.g. before first unlock): retry a few times instead of staying empty.
+                if (result == null && !live && retries++ < 6) main.postDelayed({ reload() }, 2000L * retries)
+                else if (result != null) retries = 0
             }
         }
     }

@@ -66,7 +66,61 @@ class GlassSkin {
         c.drawPath(path, rim)
     }
 
+    /**
+     * Notification card / control-centre glass, after the ColorOS 17 reference: an even, light body
+     * with an edge that is bright along the top and bottom, faint down the sides, and bleeds a few
+     * dp inward. ([draw]'s diagonal lobes read as a broken wire outline on wide cards.)
+     *
+     * @param fill straight ARGB, from [Looks.panelBody]
+     * @param strength edge strength (1 = default)
+     */
+    fun drawPanel(c: Canvas, rect: RectF, radii: FloatArray, fill: Int, strength: Float, density: Float) {
+        if (rect.width() <= 1f || rect.height() <= 1f) return
+        path.reset()
+        path.addRoundRect(rect, radii, Path.Direction.CW)
+        body.color = fill
+        c.drawPath(path, body)
+        if (strength <= 0f) return
+
+        fun white(a: Int) = Color.argb((a * strength).toInt().coerceIn(0, 255), 255, 255, 255)
+        // The lit part of the edge follows the corner, whatever the card's height.
+        val reach = (maxOf(radii.max(), 6 * density) / rect.height()).coerceIn(0.02f, 0.49f)
+        val stops = floatArrayOf(0f, reach, 1f - reach, 1f)
+        fun edge(top: Int, side: Int, bottom: Int) = LinearGradient(0f, rect.top, 0f, rect.bottom,
+            intArrayOf(white(top), white(side), white(side), white(bottom)), stops, Shader.TileMode.CLAMP)
+
+        // Inner glow: nested strokes clipped to the shape, so only their inward halves show.
+        c.save()
+        c.clipPath(path)
+        rim.shader = edge(0x14, 0x05, 0x18)
+        for (width in GLOW_WIDTHS_DP) {
+            rim.strokeWidth = width * density
+            c.drawPath(path, rim)
+        }
+        c.restore()
+
+        val sw = (0.9f * density).coerceAtLeast(1f)
+        inner.set(rect.left + sw / 2, rect.top + sw / 2, rect.right - sw / 2, rect.bottom - sw / 2)
+        path.reset()
+        path.addRoundRect(inner, radii, Path.Direction.CW)
+        rim.shader = edge(0x80, 0x30, 0x68)
+        rim.strokeWidth = sw
+        c.drawPath(path, rim)
+    }
+
     companion object {
+        private val GLOW_WIDTHS_DP = floatArrayOf(3f, 6f, 9f)
+
         fun uniform(r: Float) = FloatArray(8) { r }
+
+        /**
+         * A user tile corner on a w x h tile: up to a pill on long tiles (2x1, 1x2, sliders), but
+         * a quarter of the side on square-ish ones (the media player), which would become circles.
+         */
+        fun tileCorner(r: Float, w: Float, h: Float): Float {
+            val short = minOf(w, h)
+            val long = maxOf(w, h)
+            return minOf(r, if (long >= short * 1.5f) short / 2 else short / 4)
+        }
     }
 }

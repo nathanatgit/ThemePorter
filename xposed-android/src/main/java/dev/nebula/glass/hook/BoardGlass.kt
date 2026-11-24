@@ -178,14 +178,9 @@ class BoardGlass : IXposedHookLoadPackage {
             else -> g.cornerRadii?.takeIf { it.size == 8 } ?: GlassSkin.uniform(g.cornerRadius)
         }
         val night = (host.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-        var tint = when {
-            st.accent != GlassStyle.AUTO -> st.accent
-            else -> Looks.tint(Surface.WIDGET_BOARD, night)
-        }
+        var tint = Looks.body(Surface.WIDGET_BOARD, st, night)
         if (t.inner) tint = (tint and 0xFFFFFF) or (((tint ushr 24) * 6 / 10) shl 24)
-        val a = ((tint ushr 24) * st.blur / 100).coerceIn(0, 255)
-        skin.draw(c, rect, radii, (tint and 0xFFFFFF) or (a shl 24),
-            Looks.specular(Surface.WIDGET_BOARD) * st.edge / 100f * (if (t.inner) 0.6f else 1f), dp)
+        skin.draw(c, rect, radii, tint, Looks.specular(Surface.WIDGET_BOARD) * st.glow * (if (t.inner) 0.6f else 1f), dp)
         // A picture card keeps its artwork faintly on the glass.
         (d as? android.graphics.drawable.BitmapDrawable)?.bitmap?.takeIf { !it.isRecycled }?.let { bmp ->
             artPaint.alpha = 0x38

@@ -1,71 +1,638 @@
 package dev.nebula.glass.ui
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
-import android.content.res.Configuration
 import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
+import android.provider.Settings
 import android.view.Gravity
 import android.view.View
-import android.view.ViewGroup
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.SeekBar
-import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import com.nathanhanapps.nebulacolorize.R
 import dev.nebula.glass.GlassStyle
+import dev.nebula.glass.GlobalStyle
+import dev.nebula.glass.LockLayout
 import dev.nebula.glass.Looks
+import dev.nebula.glass.Shapes
 import dev.nebula.glass.Surface
-import dev.nebula.glass.LensGlass
 import java.util.concurrent.Executors
 
 /**
- * nebulaColorize settings: one shared glass look (intensity, edge glow, accent with palette and ink
- * picker) with a live preview over the lock wallpaper, and an on/off per surface. Changes save and
- * apply live (see [SettingsStore]).
- * Framework views only, built in code, so the module APK stays dependency-free.
+ * nebulaColorize settings, kept to what's needed (user decision 2026-11-23), in two tabs:
+ *  - **Glass**: a pinned live preview, Clear / Tinted (colour bar + intensity bar), and Blur, Glow, Dim.
+ *    The chip beside the title (a glass menu) picks whether that edits every surface or one panel;
+ *    a panel follows the shared look until its "Follow all surfaces" switch is off. Tapping a part
+ *    of the shared preview goes to its settings. Shapes (folder, dock, control-centre tiles) and the
+ *    lock screen's layout and text sit with the scope they belong to.
+ *  - **Apply to**: one switch per area (Home and Lock screen expand), plus Restart and Reset. The
+ *    clock's size and boldness live in Nubia's editor only ([dev.nebula.glass.hook.LockEditor]).
+ * Changes save and apply live (see [SettingsStore]).
  */
 class SettingsActivity : Activity() {
     private lateinit var store: SettingsStore
+    private lateinit var theme: UiTheme
     private lateinit var root: FrameLayout
+    private lateinit var backdrop: GlassBackdrop
+    private lateinit var tabs: GlassTabs
+    private lateinit var stage: PreviewStage
+    private lateinit var scopeChip: TextView
+    private lateinit var glassScroll: ScrollView
+    private lateinit var shapesCardView: View
+
     private var overlay: View? = null
     private var wallpaper: Bitmap? = null
-    private var wallpaperColors = IntArray(0)
-    private val onWallpaper = ArrayList<() -> Unit>()
-    private val night get() = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-    private val dp get() = resources.displayMetrics.density
+    private var wallpaperColours = IntArray(0)
 
-    // Theme colours, light / dark
-    private val bg get() = if (night) Color.BLACK else 0xFFF2F3F7.toInt()
-    private val card get() = if (night) 0xFF1C1C1E.toInt() else Color.WHITE
-    private val ink get() = if (night) Color.WHITE else 0xFF111111.toInt()
-    private val sub get() = if (night) 0xFF98989F.toInt() else 0xFF6E6E73.toInt()
-    private val accent = 0xFF0A84FF.toInt()
+    /** The panel whose look is being edited; null = all surfaces. */
+    private var scope: Surface? = null
+    private val pages = ArrayList<View>()
+    private val panes = ArrayList<GlassPane>()
+
+    /** Re-read the settings into a control, or recolour it. */
+    private val bindings = ArrayList<() -> Unit>()
+
+    private val dp get() = resources.displayMetrics.density
+    private fun px(v: Int) = (v * dp).toInt()
+    private fun look() = store.look(scope)
 
     override fun onCreate(state: Bundle?) {
-        setTheme(if (night) android.R.style.Theme_Material_NoActionBar else android.R.style.Theme_Material_Light_NoActionBar)
+        theme = UiTheme(this)
+        setTheme(if (theme.night) android.R.style.Theme_DeviceDefault_NoActionBar else android.R.style.Theme_DeviceDefault_Light_NoActionBar)
         super.onCreate(state)
         store = SettingsStore(this)
-        root = FrameLayout(this).apply { setBackgroundColor(bg) }
+        scope = state?.getString(STATE_SCOPE)?.let { key -> Surface.PANELS.find { it.key == key } }
+        if (state == null && intent?.getStringExtra(EXTRA_SECTION) == SECTION_LOCK) scope = Surface.LOCK_WIDGET
+
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
+        window.isNavigationBarContrastEnforced = false
+        window.setDecorFitsSystemWindows(false)
+        root = FrameLayout(this)
         setContentView(root)
-        window.statusBarColor = bg
-        window.navigationBarColor = bg
-        showPage()
+        val darkIcons = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+        window.insetsController?.setSystemBarsAppearance(if (theme.night) 0 else darkIcons, darkIcons)
+
+        build()
+        showTab(if (scope == Surface.LOCK_WIDGET && state == null) 0 else state?.getInt(STATE_TAB) ?: 0, animate = false)
+        sync()
         loadWallpaper()
     }
 
-    // ---------- wallpaper ----------
+    override fun onSaveInstanceState(out: Bundle) {
+        super.onSaveInstanceState(out)
+        out.putInt(STATE_TAB, tabs.selected)
+        scope?.let { out.putString(STATE_SCOPE, it.key) }
+    }
+
+    // ---------- layout
+
+    private fun build() {
+        backdrop = GlassBackdrop(this, theme) { wallpaper }
+        root.addView(backdrop, FrameLayout.LayoutParams(-1, -1))
+        val screen = FrameLayout(this)
+        root.addView(screen, FrameLayout.LayoutParams(-1, -1))
+        screen.setOnApplyWindowInsetsListener { v, insets ->
+            val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            insets
+        }
+
+        val above = FrameLayout.LayoutParams(-1, -1).apply { bottomMargin = px(84) }   // clear of the floating bar
+        for (page in listOf(glassPage(), applyPage())) {
+            screen.addView(page, FrameLayout.LayoutParams(above as android.view.ViewGroup.MarginLayoutParams))
+            pages.add(page)
+        }
+
+        val bar = pane(32f)
+        tabs = GlassTabs(this, theme, listOf(R.drawable.ic_drop to "Glass", R.drawable.ic_grid to "Apply to")) { showTab(it, animate = true) }
+        bindings.add { tabs.recolour() }
+        bar.addView(tabs, LinearLayout.LayoutParams(-1, -1))
+        screen.addView(bar, FrameLayout.LayoutParams(px(240), px(64), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = px(12) })
+    }
+
+    private fun showTab(index: Int, animate: Boolean) {
+        tabs.select(index, animate)
+        for ((i, page) in pages.withIndex()) page.visibility = if (i == index) View.VISIBLE else View.GONE
+    }
+
+    private fun header(title: String, trailing: View? = null) = LinearLayout(this).apply {
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(px(22), px(6), px(16), px(6))
+        addView(text(title, 26f).apply { typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL) },
+            LinearLayout.LayoutParams(0, px(44), 1f))
+        trailing?.let { addView(it, LinearLayout.LayoutParams(-2, px(40))) }
+    }
+
+    private fun glassPage(): View {
+        val page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        scopeChip = text("", 14f).apply {
+            gravity = Gravity.CENTER
+            setPadding(px(16), 0, px(16), 0)
+            setOnClickListener { chooseScope() }
+        }
+        page.addView(header("Liquid Glass", scopeChip))
+
+        stage = PreviewStage(this, ::previewStyle, { wallpaper }) { s -> previewPicked(s) }
+        stage.show(scope)
+        // Pinned: only the controls below scroll, so the preview is in view while dragging.
+        page.addView(stage, LinearLayout.LayoutParams(-1, px(236)).apply { setMargins(px(16), 0, px(16), px(12)) })
+
+        val col = column()
+        if (!store.hooksCanRead) col.addView(banner(), gapBelow())
+        col.addView(followCard(), gapBelow())
+        val style = styleCard()
+        val amounts = amountsCard()
+        col.addView(style, gapBelow())
+        col.addView(amounts, gapBelow())
+        bindings.add {
+            val own = scope?.let { !store.follows(it) } ?: true
+            style.visibility = if (own) View.VISIBLE else View.GONE
+            amounts.visibility = if (own) View.VISIBLE else View.GONE
+        }
+        shapesCardView = shapesCard()
+        col.addView(shapesCardView, gapBelow())
+        col.addView(lockLayoutCard(), gapBelow())
+        glassScroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(col) }
+        page.addView(glassScroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        return page
+    }
+
+    /** A panel's "Follow all surfaces" switch (user request 2026-11-24). */
+    private fun followCard(): View {
+        val card = pane(28f).apply { setPadding(0, px(4), 0, px(4)) }
+        card.addView(toggle("Follow all surfaces", { scope?.let { store.follows(it) } ?: true }) { on ->
+            scope?.let { store.setFollow(it, on) }
+            sync()
+        })
+        val note = text("Uses the All surfaces look. Switch off to tune this one on its own.", 13f, theme.inkSoft)
+            .apply { setPadding(px(20), 0, px(20), px(10)) }
+        card.addView(note)
+        bindings.add {
+            card.visibility = if (scope != null) View.VISIBLE else View.GONE
+            note.visibility = if (scope?.let { store.follows(it) } == true) View.VISIBLE else View.GONE
+            note.setTextColor(theme.inkSoft)
+        }
+        return card
+    }
+
+    /** Tapping the shared preview: a panel opens its own settings, the home screen scrolls to its shapes. */
+    private fun previewPicked(s: Surface) {
+        if (s == Surface.FOLDER) {
+            glassScroll.post { glassScroll.smoothScrollTo(0, shapesCardView.top) }
+            shapesCardView.animate().alpha(0.55f).setDuration(140).withEndAction {
+                shapesCardView.animate().alpha(1f).setDuration(220).start()
+            }.start()
+            return
+        }
+        setScope(s.lookKey)
+    }
+
+    private fun setScope(s: Surface?) {
+        scope = s
+        stage.show(scope)
+        sync()
+        glassScroll.post { glassScroll.smoothScrollTo(0, 0) }
+    }
+
+    /**
+     * One labelled slider: the label and value on a line, the slider under it.
+     * @param read the slider position; [show] turns it into the value's text
+     */
+    private fun valueRow(into: LinearLayout, label: String, max: Int, detent: Int?, visible: () -> Boolean,
+                         read: () -> Int, show: (Int) -> String, write: (Int) -> Unit) {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(px(4), px(6), 0, 0) }
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        val value = text("", 13f, theme.inkSoft).apply { gravity = Gravity.END }
+        head.addView(text(label, 15f), LinearLayout.LayoutParams(0, -2, 1f))
+        head.addView(value, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = px(10) })
+        val slider = GlassSlider(this, theme, max, detent = detent) { v -> write(v); sync() }.apply { contentDescription = label }
+        row.addView(head)
+        row.addView(slider)
+        into.addView(row)
+        bindings.add {
+            row.visibility = if (visible()) View.VISIBLE else View.GONE
+            val v = read()
+            slider.progress = v
+            slider.invalidate()
+            value.text = show(v)
+            value.setTextColor(theme.inkSoft)
+        }
+    }
+
+    /** Corner sliders: far left keeps Nubia's shape, far right is a pill. */
+    private fun cornerToSlider(v: Int) = when {
+        v < 0 -> 0
+        v >= Shapes.PILL -> Shapes.MAX_CORNER + 2
+        else -> v + 1
+    }
+
+    private fun sliderToCorner(p: Int) = when {
+        p <= 0 -> GlassStyle.ORIGINAL
+        p >= Shapes.MAX_CORNER + 2 -> Shapes.PILL
+        else -> p - 1
+    }
+
+    private fun cornerText(p: Int) = when (val v = sliderToCorner(p)) {
+        GlassStyle.ORIGINAL -> "Nubia's"
+        Shapes.PILL -> "Pill"
+        else -> "$v dp"
+    }
+
+    /** Folder and dock shapes with the shared look; tile corners with the control centre (user request 2026-11-24). */
+    private fun shapesCard(): View {
+        val card = pane(28f).apply { setPadding(px(16), px(10), px(10), px(10)) }
+        val title = text("Shapes", 14f, theme.inkSoft)
+        card.addView(title)
+        val home = { scope == null }
+        val corners = Shapes.MAX_CORNER + 2
+        valueRow(card, "Folder corner", corners, 0, home, { cornerToSlider(store.shapes.folderCorner) }, ::cornerText) {
+            store.setShapes(store.shapes.copy(folderCorner = sliderToCorner(it)))
+        }
+        valueRow(card, "Tile corner", corners, 0, { scope == Surface.CONTROL_CENTER },
+            { cornerToSlider(store.shapes.tileCorner) }, ::cornerText) {
+            store.setShapes(store.shapes.copy(tileCorner = sliderToCorner(it)))
+        }
+        valueRow(card, "Dock width", 100 - Shapes.MIN_DOCK_WIDTH, 100 - Shapes.MIN_DOCK_WIDTH, home,
+            { store.shapes.dockWidth - Shapes.MIN_DOCK_WIDTH }, { "${it + Shapes.MIN_DOCK_WIDTH}%" }) {
+            store.setShapes(store.shapes.copy(dockWidth = it + Shapes.MIN_DOCK_WIDTH))
+        }
+        valueRow(card, "Dock height", Shapes.MAX_DOCK_PAD, Shapes.DOCK_PAD, home,
+            { store.shapes.dockPad }, { "$it dp around icons" }) {
+            store.setShapes(store.shapes.copy(dockPad = it))
+        }
+        valueRow(card, "Dock corner", corners, 0, home, { cornerToSlider(store.shapes.dockCorner) }, ::cornerText) {
+            store.setShapes(store.shapes.copy(dockCorner = sliderToCorner(it)))
+        }
+        bindings.add {
+            card.visibility = if (scope == null || scope == Surface.CONTROL_CENTER) View.VISIBLE else View.GONE
+            title.setTextColor(theme.inkSoft)
+        }
+        return card
+    }
+
+    private fun previewStyle(s: Surface): GlassStyle {
+        // The shared preview shows the shared look, even where a panel has its own.
+        val st = store.config.style(s)
+        return if (scope == null) st.copy(look = store.config.global) else st
+    }
+
+    private fun styleCard(): View {
+        val card = pane(28f).apply { setPadding(px(10), px(10), px(10), px(10)) }
+        val choices = LinearLayout(this)
+        val clear = StyleChoice(this, theme, "Clear") { SWATCH_CLEAR }
+        val tinted = StyleChoice(this, theme, "Tinted") { Palette.alpha(colourOf(look()), 0.8f) }
+        clear.setOnClickListener { edit { copy(tinted = false) } }
+        tinted.setOnClickListener { edit { copy(tinted = true, color = colourOf(this)) } }
+        choices.addView(clear, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = px(6) })
+        choices.addView(tinted, LinearLayout.LayoutParams(0, -2, 1f))
+        card.addView(choices)
+
+        val colourControls = column().apply { setPadding(px(2), px(8), px(2), 0) }
+        card.addView(colourControls)
+
+        val hsv = FloatArray(3)
+        var lastHueColour = 0
+        val hue = GlassSlider(this, theme, 359, ramp = { HUES }, thumbColour = { colourOf(look()) }) { h ->
+            Color.colorToHSV(colourOf(look()), hsv)
+            hsv[0] = h.toFloat()
+            // From grey, black or white there's no hue to move: give it some colour.
+            if (hsv[1] < 0.15f) hsv[1] = 0.6f
+            if (hsv[2] < 0.35f) hsv[2] = 0.8f
+            val c = Color.HSVToColor(hsv)
+            lastHueColour = c
+            edit { copy(tinted = true, color = c) }
+        }.apply { contentDescription = "Tint colour" }
+        colourControls.addView(hue)
+
+        val intensity = GlassSlider(this, theme, GlobalStyle.MAX_INTENSITY,
+            ramp = { intArrayOf(Color.WHITE, colourOf(look())) }, thumbColour = { colourOf(look()) }) { v ->
+            edit { copy(intensity = v) }
+        }.apply { contentDescription = "Tint intensity" }
+        colourControls.addView(intensity)
+
+        val sources = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(0, px(6), 0, px(2)) }
+        fun addSource(icon: Int, description: String, colour: () -> Int?): SourceDot {
+            val dot = SourceDot(this, theme, icon, description) { colour() ?: theme.container }
+            dot.setOnClickListener { colour()?.let { c -> edit { copy(tinted = true, color = c) } } }
+            sources.addView(dot, LinearLayout.LayoutParams(px(48), px(48)).apply { marginStart = px(10); marginEnd = px(10) })
+            bindings.add {
+                val c = colour()
+                dot.visibility = if (c == null) View.GONE else View.VISIBLE
+                dot.isSelected = c == look().color
+                dot.invalidate()
+            }
+            return dot
+        }
+        addSource(R.drawable.ic_phone, "System colour") { theme.systemAccent }
+        addSource(R.drawable.ic_image, "Wallpaper colour") { wallpaperColours.getOrNull(0) }
+        addSource(R.drawable.ic_image, "Second wallpaper colour") { wallpaperColours.getOrNull(1) }
+        val dropper = SourceDot(this, theme, R.drawable.ic_dropper, "Pick from the wallpaper or an image") { colourOf(look()) }
+        dropper.setOnClickListener { if (wallpaper != null) openInk() else pickImage() }
+        sources.addView(dropper, LinearLayout.LayoutParams(px(48), px(48)).apply { marginStart = px(10); marginEnd = px(10) })
+        colourControls.addView(sources)
+
+        bindings.add {
+            val g = look()
+            clear.isSelected = !g.tinted
+            tinted.isSelected = g.tinted
+            clear.invalidate(); tinted.invalidate(); dropper.invalidate()
+            colourControls.visibility = if (g.tinted) View.VISIBLE else View.GONE
+            val c = colourOf(g)
+            if (c != lastHueColour) {   // not while dragging it: rounding would make the thumb jitter
+                Color.colorToHSV(c, hsv)
+                hue.progress = hsv[0].toInt()
+                lastHueColour = c
+            }
+            intensity.progress = g.intensity
+            hue.invalidate(); intensity.invalidate()
+        }
+        return card
+    }
+
+    private fun amountsCard(): View {
+        val card = pane(28f).apply { setPadding(px(16), px(8), px(10), px(8)) }
+        fun amount(label: String, max: Int, applies: (Surface) -> Boolean,
+                   read: (GlobalStyle) -> Int, write: GlobalStyle.(Int) -> GlobalStyle) {
+            val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+            val value = text("", 13f, theme.inkSoft).apply { gravity = Gravity.END }
+            val slider = GlassSlider(this, theme, max, detent = GlobalStyle.DEFAULT) { v -> edit { write(v) } }
+                .apply { contentDescription = label }
+            row.addView(text(label, 16f), LinearLayout.LayoutParams(px(48), -2))
+            row.addView(slider, LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(value, LinearLayout.LayoutParams(px(46), -2))
+            card.addView(row, LinearLayout.LayoutParams(-1, px(52)))
+            bindings.add {
+                row.visibility = if (scope?.let(applies) != false) View.VISIBLE else View.GONE
+                val v = read(look())
+                slider.progress = v
+                slider.invalidate()
+                value.text = "$v%"
+            }
+        }
+        amount("Blur", GlobalStyle.MAX_BLUR, { it.hasBlur }, { it.blur }, { copy(blur = it) })
+        amount("Glow", GlobalStyle.MAX_GLOW, { true }, { it.glow }, { copy(glow = it) })
+        amount("Dim", GlobalStyle.MAX_DIM, { it.hasDim }, { it.dim }, { copy(dim = it) })
+        return card
+    }
+
+    private fun applyPage(): View {
+        val page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        page.addView(header("Apply to"))
+        val col = column()
+        val areas = pane(28f).apply { setPadding(0, px(6), 0, px(6)) }
+        for (area in AREAS) addArea(areas, area)
+        col.addView(areas, gapBelow())
+
+        val actions = LinearLayout(this)
+        actions.addView(button("Restart apps", R.drawable.ic_restart) {
+            confirm("Restart apps?", "System UI, launcher, lock screen and widget board restart. Needs root; the screen blanks briefly.",
+                "Restart") { restartPackages() }
+        }, LinearLayout.LayoutParams(0, px(52), 1f).apply { marginEnd = px(8) })
+        actions.addView(button("Reset look", R.drawable.ic_reset) {
+            confirm("Reset the glass look?", "Clear style with Blur, Glow and Dim at 100 %, for every surface, all following it. Switches and shapes stay as they are.",
+                "Reset") { store.resetGlobal(); setScope(null) }
+        }, LinearLayout.LayoutParams(0, px(52), 1f))
+        col.addView(actions, gapBelow())
+
+        val access = text("Use my real wallpaper in previews and the eyedropper", 14f).apply {
+            gravity = Gravity.CENTER
+            minimumHeight = px(48)
+            setOnClickListener {
+                startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")))
+            }
+        }
+        bindings.add {
+            access.setTextColor(theme.primary)
+            access.visibility = if (wallpaper == null) View.VISIBLE else View.GONE
+        }
+        col.addView(access)
+        page.addView(ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(col) }, LinearLayout.LayoutParams(-1, 0, 1f))
+        return page
+    }
+
+    /** An area's switch. An area of several surfaces expands to theirs. */
+    private fun addArea(into: LinearLayout, area: Area) {
+        val detail = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
+        val row = switchRow(area.title, area.surfaces, indent = 20, textSize = 17f, height = 64)
+        into.addView(row)
+        if (area.surfaces.size < 2) return
+        val arrow = ImageView(this).apply { setImageResource(R.drawable.ic_expand); setColorFilter(theme.inkSoft) }
+        row.addView(arrow, 1, LinearLayout.LayoutParams(px(24), px(24)).apply { marginEnd = px(12) })
+        row.contentDescription = "${area.title}, show details"
+        row.setOnClickListener {
+            val open = detail.visibility != View.VISIBLE
+            detail.visibility = if (open) View.VISIBLE else View.GONE
+            arrow.animate().rotation(if (open) 180f else 0f).setDuration(180).start()
+        }
+        for (s in area.surfaces) detail.addView(switchRow(s.title, listOf(s), indent = 36, textSize = 15f, height = 52))
+        into.addView(detail)
+    }
+
+    private fun switchRow(title: String, surfaces: List<Surface>, indent: Int, textSize: Float, height: Int) = LinearLayout(this).apply {
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(px(indent), 0, px(16), 0)
+        layoutParams = LinearLayout.LayoutParams(-1, px(height))
+        addView(text(title, textSize), LinearLayout.LayoutParams(0, -2, 1f))
+        val switch = GlassSwitch(this@SettingsActivity, theme).apply { contentDescription = title }
+        addView(switch, LinearLayout.LayoutParams(-2, -2))
+        var syncing = false
+        switch.setOnCheckedChangeListener { _, on ->
+            switch.invalidate()
+            if (!syncing) { store.setOn(surfaces, on); sync() }
+        }
+        setOnClickListener { switch.toggle() }
+        bindings.add {
+            syncing = true
+            switch.isChecked = surfaces.any { store.isOn(it) }
+            syncing = false
+            switch.invalidate()
+        }
+    }
+
+    private fun lockLayoutCard(): View {
+        val card = pane(28f).apply { setPadding(0, px(6), 0, px(6)) }
+        val title = text("Lock screen layout", 14f, theme.inkSoft).apply { setPadding(px(20), px(4), 0, px(2)) }
+        card.addView(title)
+        bindings.add {
+            card.visibility = if (scope == Surface.LOCK_WIDGET) View.VISIBLE else View.GONE
+            title.setTextColor(theme.inkSoft)
+        }
+        card.addView(toggle("Widgets and shortcuts at bottom", { store.lock.bottomWidgets }) {
+            store.setLock(store.lock.copy(bottomWidgets = it))
+        })
+        card.addView(toggle("Notifications at bottom", { store.lock.bottomNotifications }) {
+            store.setLock(store.lock.copy(bottomNotifications = it))
+        })
+        val editor = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(px(20), 0, px(22), 0)
+            layoutParams = LinearLayout.LayoutParams(-1, px(60))
+            setOnClickListener { openLockEditor() }
+        }
+        val label = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        label.addView(text("Clock, date and custom text", 16f))
+        label.addView(text("Box size and boldness, in the lock screen editor", 12f, theme.inkSoft))
+        editor.addView(label, LinearLayout.LayoutParams(0, -2, 1f))
+        editor.addView(ImageView(this).apply {
+            setImageResource(R.drawable.ic_expand)
+            setColorFilter(theme.inkSoft)
+            rotation = -90f
+        }, LinearLayout.LayoutParams(px(24), px(24)))
+        card.addView(editor)
+        val fontNote = text("Clock font: pick it in Nubia's editor (时钟字体). The first font is Roboto Flex, whose width and height axes fill the box. Rubik and Oswald use their variable versions. Fonts without width or height axes keep their proportions.",
+            12f, theme.inkSoft).apply { setPadding(px(20), px(4), px(20), px(10)) }
+        card.addView(fontNote)
+        bindings.add { fontNote.setTextColor(theme.inkSoft) }
+
+        return card
+    }
+
+
+    private fun toggle(title: String, read: () -> Boolean, write: (Boolean) -> Unit) = LinearLayout(this).apply {
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(px(20), 0, px(16), 0)
+        layoutParams = LinearLayout.LayoutParams(-1, px(60))
+        addView(text(title, 16f), LinearLayout.LayoutParams(0, -2, 1f))
+        val switch = GlassSwitch(this@SettingsActivity, theme).apply { contentDescription = title }
+        addView(switch, LinearLayout.LayoutParams(-2, -2))
+        var syncing = false
+        switch.setOnCheckedChangeListener { _, on ->
+            switch.invalidate()
+            if (!syncing) write(on)
+        }
+        setOnClickListener { switch.toggle() }
+        bindings.add {
+            syncing = true
+            switch.isChecked = read()
+            syncing = false
+            switch.invalidate()
+        }
+    }
+
+    private fun openLockEditor() {
+        try {
+            startActivity(Intent().setClassName(SYSTEM_UI, LOCK_SCREENS))
+        } catch (_: Exception) {
+            Toast.makeText(this, "Long-press the lock screen to edit it", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // ---------- behaviour
+
+    private fun edit(change: GlobalStyle.() -> GlobalStyle) {
+        store.setLook(scope, look().change())
+        sync()
+    }
+
+    /** The colour Tinted uses, or would start from. */
+    private fun colourOf(g: GlobalStyle) = when {
+        g.color != GlassStyle.AUTO -> g.color
+        else -> wallpaperColours.firstOrNull() ?: theme.systemAccent
+    }
+
+    /** The scope menu: a glass sheet under the chip. */
+    private fun chooseScope() {
+        if (overlay != null) { closeOverlay(); return }
+        val catcher = FrameLayout(this).apply {
+            isClickable = true
+            setOnClickListener { closeOverlay() }
+        }
+        val menu = GlassPane(this, theme, backdrop, 24f).apply { setPadding(px(6), px(6), px(6), px(6)) }
+        for (s in listOf<Surface?>(null) + Surface.PANELS) {
+            val own = s != null && !store.follows(s)
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(px(16), 0, px(16), 0)
+                if (s == scope) background = round(theme.container, 18)
+                contentDescription = scopeName(s)
+                setOnClickListener { closeOverlay(); setScope(s) }
+            }
+            val ink = if (s == scope) theme.onContainer else theme.ink
+            row.addView(text(scopeName(s), 16f, ink))
+            if (s != null) row.addView(text(if (own) "Own look" else "Follows all surfaces", 12f, if (s == scope) ink else theme.inkSoft))
+            menu.addView(row, LinearLayout.LayoutParams(-1, px(if (s == null) 48 else 56)))
+        }
+        val at = IntArray(2)
+        val rootAt = IntArray(2)
+        scopeChip.getLocationInWindow(at)
+        root.getLocationInWindow(rootAt)
+        val width = px(232)
+        val left = (at[0] - rootAt[0] + scopeChip.width - width).coerceAtLeast(px(12))
+        catcher.addView(menu, FrameLayout.LayoutParams(width, -2).apply {
+            leftMargin = left
+            topMargin = at[1] - rootAt[1] + scopeChip.height + px(6)
+        })
+        menu.alpha = 0f
+        menu.scaleX = 0.92f; menu.scaleY = 0.92f
+        menu.pivotX = width.toFloat(); menu.pivotY = 0f
+        menu.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(160).start()
+        overlay = catcher
+        root.addView(catcher, FrameLayout.LayoutParams(-1, -1))
+    }
+
+    private fun scopeName(s: Surface?) = when (s) {
+        Surface.NOTIFICATION -> "Notifications"
+        Surface.CONTROL_CENTER -> "Control centre"
+        Surface.WIDGET_BOARD -> "Widget board"
+        Surface.LOCK_WIDGET -> "Lock screen"
+        else -> "All surfaces"
+    }
+
+    /** Re-read every control from the settings and recolour the app from the look being edited. */
+    private fun sync() {
+        val g = look()
+        val seed = if (g.tinted) colourOf(g) else theme.systemAccent
+        if (seed != theme.seed) theme.seedFrom(seed)
+        bindings.forEach { it() }
+        scopeChip.text = "${scopeName(scope)}  ▾"
+        scopeChip.setTextColor(theme.onContainer)
+        scopeChip.background = round(theme.container, 20)
+        backdrop.invalidate()
+        panes.forEach { it.recolour() }
+        stage.refresh()
+    }
+
+    private fun confirm(title: String, message: String, action: String, run: () -> Unit) {
+        AlertDialog.Builder(this).setTitle(title).setMessage(message)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(action) { _, _ -> run() }
+            .show()
+    }
+
+    /** Kills the scoped packages as root; the system respawns them with the hooks reloaded. */
+    private fun restartPackages() {
+        io.execute {
+            // System UI last: it takes this app's toast with it on some builds.
+            val script = OTHER_PACKAGES.joinToString("; ") { "am force-stop $it" } + "; kill \$(pidof $SYSTEM_UI)"
+            val ok = try {
+                val p = ProcessBuilder("su", "-c", script).redirectErrorStream(true).start()
+                p.inputStream.readBytes(); p.waitFor() == 0
+            } catch (_: Exception) { false }
+            runOnUiThread {
+                Toast.makeText(this, if (ok) "Restarted" else "Restart failed: root (su) unavailable", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // ---------- wallpaper and eyedropper
 
     private fun loadWallpaper() {
-        wallpaperColors = LockWallpaper.systemColors(this)
+        wallpaperColours = LockWallpaper.systemColors(this)
+        sync()
         io.execute {
             val b = LockWallpaper.load(this, maxOf(resources.displayMetrics.heightPixels, 1600))
             runOnUiThread { if (b != null) useWallpaper(b) }
@@ -74,20 +641,23 @@ class SettingsActivity : Activity() {
 
     private fun useWallpaper(b: Bitmap) {
         wallpaper = b
-        val extra = LockWallpaper.dominant(b)
-        wallpaperColors = (wallpaperColors.toList() + extra.toList()).distinct().take(8).toIntArray()
-        onWallpaper.toList().forEach { it() }
-    }
-
-    /** No permission to read the wallpaper: let the user choose the image (system picker, no permission). */
-    private fun pickImage() {
-        startActivityForResult(Intent(MediaStore.ACTION_PICK_IMAGES).setType("image/*"), REQ_IMAGE)
+        wallpaperColours = (wallpaperColours.toList() + LockWallpaper.dominant(b).toList()).distinct().toIntArray()
+        sync()
     }
 
     override fun onResume() {
         super.onResume()
+        if (::store.isInitialized) {
+            store.reload()   // the lock-screen editor saves there too
+            sync()
+        }
         // Coming back from the all-files access page: try the real wallpaper again.
         if (wallpaper == null && ::store.isInitialized) loadWallpaper()
+    }
+
+    /** No permission to read the wallpaper: the system picker needs none. */
+    private fun pickImage() {
+        startActivityForResult(Intent(MediaStore.ACTION_PICK_IMAGES).setType("image/*"), REQ_IMAGE)
     }
 
     @Deprecated("Deprecated in Java")
@@ -101,392 +671,91 @@ class SettingsActivity : Activity() {
         }
     }
 
-    // ---------- page ----------
-
-    /**
-     * One page: the shared look (applies to every Liquid Glass surface) and an on/off per surface.
-     * User decision 2026-11-21: unified intensity, edge glow and accent; surfaces are toggles only.
-     */
-    private fun showPage() {
-        onWallpaper.clear()
-        val col = column()
-        col.addView(title("nebulaColorize", 30f), lp(top = 24))
-        col.addView(text("Liquid Glass for the Nubia launcher, lock screen, notifications and control centre", 14f, sub), lp(bottom = 8))
-        if (!store.hooksCanRead) col.addView(banner(
-            "Enable nebulaColorize in Vector, then reopen this app. Until then the hooks can't read these settings; changes still apply live while SystemUI and the launcher are running."), lp(bottom = 8))
-
-        val preview = Preview()
-        col.addView(preview, LinearLayout.LayoutParams(-1, (200 * dp).toInt()).apply { topMargin = (12 * dp).toInt() })
-        val refresh = { preview.refresh() }
-
-        col.addView(section("Glass look · all surfaces"), lp(top = 20, bottom = 6))
-        val look = cardBox()
-        look.addView(sliderRow("Glass intensity", store.global.intensity, GlassStyle.MAX_BLUR, "%") { v ->
-            store.setGlobal(store.global.copy(intensity = v)); refresh()
-        })
-        look.addView(sliderRow("Edge glow", store.global.edge, GlassStyle.MAX_EDGE, "%") { v ->
-            store.setGlobal(store.global.copy(edge = v)); refresh()
-        })
-        col.addView(look, lp())
-
-        col.addView(section("Accent colour · all surfaces"), lp(top = 20, bottom = 6))
-        col.addView(colourPanel(refresh), lp())
-        col.addView(text("Folder tiles use a folder's own Nubia colour when you have set one; otherwise they follow this accent.", 12f, sub)
-            .apply { setPadding((8 * dp).toInt(), 0, (8 * dp).toInt(), 0) }, lp(top = 6))
-
-        for (where in Surface.values().map { it.where }.distinct()) {
-            col.addView(section(where), lp(top = 22, bottom = 6))
-            val group = cardBox()
-            for (s in Surface.values().filter { it.where == where }) {
-                group.addView(toggleRow(s.title, store.isOn(s)) { on -> store.setOn(s, on); refresh() })
-                if (s in Surface.PANELS) group.addView(panelLook(s))
-            }
-            col.addView(group, lp())
-        }
-
-        col.addView(section("Restart scoped apps"), lp(top = 22, bottom = 6))
-        val restart = cardBox()
-        for ((label, pkg) in SCOPED) restart.addView(restartRow(label, listOf(pkg)))
-        restart.addView(restartRow("All of the above", SCOPED.map { it.second }))
-        col.addView(restart, lp())
-        col.addView(text("Needs root. Restarting System UI briefly blanks the screen.", 12f, sub)
-            .apply { setPadding((8 * dp).toInt(), 0, (8 * dp).toInt(), 0) }, lp(top = 6))
-
-        col.addView(text("Reset glass look", 16f, 0xFFFF453A.toInt()).apply {
-            gravity = Gravity.CENTER; setPadding(0, (14 * dp).toInt(), 0, (14 * dp).toInt())
-            background = round(card, 16)
-            setOnClickListener { store.resetGlobal(); showPage() }
-        }, lp(top = 24, bottom = 32))
-        show(col)
-    }
-
-    /**
-     * Auto · ink picker · wallpaper colours · colourful palette · tonal ramp · custom HSV · strength.
-     * Picking any colour keeps the current strength (or 35 % coming from Auto).
-     */
-    private fun colourPanel(refresh: () -> Unit): View {
-        val box = cardBox().apply { setPadding((14 * dp).toInt(), (12 * dp).toInt(), (14 * dp).toInt(), (14 * dp).toInt()) }
-        val current = { store.global.accent }
-        val strength = { if (current() == GlassStyle.AUTO) 35 else Palette.strengthOf(current()) }
-        fun setAccent(a: Int) = store.setGlobal(store.global.copy(accent = a))
-        val label = text("", 14f, sub)
-        val grids = ArrayList<SwatchGrid>()
-        val ramp = SwatchGrid(this, 9).apply { ringColor = ink }
-        val hsv = HsvPicker(this)
-        val strengthBar = SeekBar(this).apply { max = 100; min = 1 }
-        val autoChip = chip("Auto")
-
-        fun sync() {
-            val a = current()
-            val rgb = if (a == GlassStyle.AUTO) null else Palette.rgb(a)
-            grids.forEach { it.selected = rgb }
-            ramp.colors = Palette.ramp(rgb ?: Palette.COLORFUL[13])
-            ramp.selected = rgb
-            if (rgb != null) hsv.setColor(rgb)
-            strengthBar.isEnabled = rgb != null
-            strengthBar.progress = strength()
-            autoChip.isSelected = rgb == null
-            styleChip(autoChip)
-            label.text = if (rgb == null) "Auto · each surface keeps its built-in tint" else "${Palette.hex(rgb)} · strength ${strength()} %"
-            refresh()
-        }
-        fun pick(rgb: Int, rampToo: Boolean = true) {
-            setAccent(Palette.withStrength(rgb, strength()))
-            if (!rampToo) { val keep = ramp.colors; sync(); ramp.colors = keep; ramp.selected = rgb } else sync()
-        }
-
-        val tools = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        autoChip.setOnClickListener { setAccent(GlassStyle.AUTO); sync() }
-        tools.addView(autoChip)
-        tools.addView(View(this), LinearLayout.LayoutParams((8 * dp).toInt(), 1))
-        tools.addView(chip("◉  Ink picker").apply {
-            setOnClickListener {
-                inkTarget = { rgb -> pick(rgb) }
-                if (wallpaper != null) openInk() else pickImage()
-            }
-        })
-        box.addView(tools)
-        val access = text("Ink picker uses an image you choose. Allow wallpaper access to pick from your real lock screen ›", 13f, accent).apply {
-            setOnClickListener {
-                startActivity(Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                    android.net.Uri.parse("package:$packageName")))
-            }
-            visibility = if (wallpaper == null) View.VISIBLE else View.GONE
-        }
-        onWallpaper.add { access.visibility = View.GONE }
-        box.addView(access, lp(top = 8))
-        box.addView(label, lp(top = 8, bottom = 4))
-
-        val wallTitle = text("From your wallpaper", 13f, sub)
-        val wallGrid = SwatchGrid(this, 8).apply { ringColor = ink; onPick = { pick(it) } }
-        grids.add(wallGrid)
-        val fillWall = {
-            wallGrid.colors = wallpaperColors
-            wallTitle.visibility = if (wallpaperColors.isEmpty()) View.GONE else View.VISIBLE
-            wallGrid.visibility = wallTitle.visibility
-        }
-        fillWall(); onWallpaper.add { fillWall(); sync() }
-        box.addView(wallTitle, lp(top = 8, bottom = 4))
-        box.addView(wallGrid, lp())
-
-        box.addView(text("Palette", 13f, sub), lp(top = 10, bottom = 4))
-        val palette = SwatchGrid(this, 12).apply { ringColor = ink; colors = Palette.COLORFUL; onPick = { pick(it) } }
-        grids.add(palette)
-        box.addView(palette, lp())
-
-        box.addView(text("Tones", 13f, sub), lp(top = 10, bottom = 4))
-        ramp.onPick = { pick(it, rampToo = false) }
-        box.addView(ramp, lp())
-
-        box.addView(text("Custom", 13f, sub), lp(top = 12, bottom = 6))
-        hsv.onChange = { pick(it) }
-        box.addView(hsv, lp())
-
-        box.addView(text("Strength", 13f, sub), lp(top = 12))
-        strengthBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(b: SeekBar, v: Int, user: Boolean) {
-                if (!user || current() == GlassStyle.AUTO) return
-                setAccent(Palette.withStrength(Palette.rgb(current()), v))
-                label.text = "${Palette.hex(current())} · strength $v %"
-                refresh()
-            }
-            override fun onStartTrackingTouch(b: SeekBar) {}
-            override fun onStopTrackingTouch(b: SeekBar) {}
-        })
-        box.addView(strengthBar, lp())
-        sync()
-        return box
-    }
-
-    /**
-     * "Own look" for a panel surface: while off it follows the shared look; while on it has its own
-     * glass intensity, edge glow and accent (colour from a compact palette plus strength).
-     */
-    private fun panelLook(s: Surface): View {
-        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        fun cur() = store.look(s)
-        fun strengthOf(a: Int) = if (a == GlassStyle.AUTO) 35 else Palette.strengthOf(a)
-        val label = text("", 13f, sub).apply { setPadding((16 * dp).toInt(), 0, (16 * dp).toInt(), 0) }
-        val grid = SwatchGrid(this, 12).apply { ringColor = ink; colors = Palette.COLORFUL }
-        val bar = SeekBar(this).apply { max = 100; min = 1 }
-        val auto = chip("Auto")
-        fun sync() {
-            val a = cur().accent
-            val rgb = if (a == GlassStyle.AUTO) null else Palette.rgb(a)
-            grid.selected = rgb
-            bar.isEnabled = rgb != null
-            bar.progress = strengthOf(a)
-            auto.isSelected = rgb == null; styleChip(auto)
-            label.text = if (rgb == null) "Accent · Auto" else "Accent · ${Palette.hex(rgb)} · strength ${strengthOf(a)} %"
-        }
-        body.addView(sliderRow("Intensity", cur().intensity, GlassStyle.MAX_BLUR, "%") { v ->
-            store.setOwn(s, cur().copy(intensity = v))
-        })
-        body.addView(sliderRow("Edge glow", cur().edge, GlassStyle.MAX_EDGE, "%") { v ->
-            store.setOwn(s, cur().copy(edge = v))
-        })
-        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            setPadding((16 * dp).toInt(), (6 * dp).toInt(), (16 * dp).toInt(), (4 * dp).toInt()) }
-        head.addView(auto)
-        head.addView(label, LinearLayout.LayoutParams(0, -2, 1f))
-        body.addView(head)
-        grid.onPick = { rgb -> store.setOwn(s, cur().copy(accent = Palette.withStrength(rgb, strengthOf(cur().accent)))); sync() }
-        body.addView(grid, LinearLayout.LayoutParams(-1, -2).apply { leftMargin = (12 * dp).toInt(); rightMargin = (12 * dp).toInt() })
-        auto.setOnClickListener { store.setOwn(s, cur().copy(accent = GlassStyle.AUTO)); sync() }
-        bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(b: SeekBar, v: Int, user: Boolean) {
-                if (!user || cur().accent == GlassStyle.AUTO) return
-                store.setOwn(s, cur().copy(accent = Palette.withStrength(Palette.rgb(cur().accent), v))); sync()
-            }
-            override fun onStartTrackingTouch(b: SeekBar) {}
-            override fun onStopTrackingTouch(b: SeekBar) {}
-        })
-        body.addView(bar, LinearLayout.LayoutParams(-1, -2).apply { leftMargin = (16 * dp).toInt(); rightMargin = (16 * dp).toInt(); bottomMargin = (8 * dp).toInt() })
-        sync()
-        body.visibility = if (store.hasOwn(s)) View.VISIBLE else View.GONE
-        box.addView(toggleRow("   Own look (else shared)", store.hasOwn(s)) { on ->
-            store.setHasOwn(s, on)
-            body.visibility = if (on) View.VISIBLE else View.GONE
-            if (on) { sync() }
-        })
-        box.addView(body)
-        return box
-    }
-
-    private var inkTarget: ((Int) -> Unit)? = null
-
     private fun openInk() {
         val b = wallpaper ?: return
-        val start = store.global.accent.takeIf { it != GlassStyle.AUTO }?.let { Palette.rgb(it) }
-        val picker = InkPicker(this, b, start) { rgb ->
+        val picker = InkPicker(this, b, colourOf(look())) { rgb ->
             closeOverlay()
-            if (rgb != null) inkTarget?.invoke(rgb)
+            if (rgb != null) edit { copy(tinted = true, color = Palette.rgb(rgb)) }
         }
         overlay = picker
         root.addView(picker, FrameLayout.LayoutParams(-1, -1))
     }
 
-    private fun closeOverlay() { overlay?.let { root.removeView(it) }; overlay = null }
-
-    /** Wallpaper with two samples: a refracting lens panel (launcher, lock screen) and a capsule. */
-    private inner class Preview : FrameLayout(this@SettingsActivity) {
-        private val image = ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
-        private val panel = GlassSample(Surface.LOCK_WIDGET, 18f)
-        private val capsule = GlassSample(Surface.POPUP, 999f)
-
-        init {
-            background = round(0xFF3A3F4B.toInt(), 22)
-            clipToOutline = true
-            addView(image, LayoutParams(-1, -1))
-            addView(panel, LayoutParams((200 * dp).toInt(), (110 * dp).toInt(), Gravity.CENTER_VERTICAL or Gravity.START).apply { leftMargin = (24 * dp).toInt() })
-            addView(capsule, LayoutParams((110 * dp).toInt(), (56 * dp).toInt(), Gravity.CENTER_VERTICAL or Gravity.END).apply { rightMargin = (24 * dp).toInt() })
-            onWallpaper.add { showImage() }
-            showImage()
-        }
-
-        private fun showImage() {
-            val b = wallpaper
-            if (b != null) image.setImageBitmap(b)
-            else image.setImageDrawable(GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                intArrayOf(0xFF6D83F2.toInt(), 0xFFF29BC3.toInt(), 0xFFFFD27A.toInt())))
-            refresh()
-        }
-
-        fun refresh() { panel.invalidate(); capsule.invalidate() }
-    }
-
-    private inner class GlassSample(private val s: Surface, private val cornerDp: Float) : View(this@SettingsActivity) {
-        private val lens: LensGlass = Looks.base(s, context, night)
-        override fun onDraw(c: Canvas) {
-            val st = store.config.style(s).copy(enabled = true)
-            Looks.style(lens, s, dp, cornerDp * dp, night, st = st)
-            if (!lens.draw(c, this, parent as View, null)) lens.drawOpaque(c, this)
-        }
-    }
-
-    // ---------- small builders ----------
-
-    private fun show(content: View) {
-        closeOverlay()
-        root.removeAllViews()
-        root.addView(ScrollView(this).apply { addView(content); isFillViewport = true }, FrameLayout.LayoutParams(-1, -1))
-    }
-
-    private fun column() = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding((16 * dp).toInt(), (24 * dp).toInt(), (16 * dp).toInt(), (24 * dp).toInt())
-    }
-
-    private fun lp(top: Int = 0, bottom: Int = 0) = LinearLayout.LayoutParams(-1, -2).apply {
-        topMargin = (top * dp).toInt(); bottomMargin = (bottom * dp).toInt()
-    }
-
-    private fun round(color: Int, radiusDp: Int) = GradientDrawable().apply { setColor(color); cornerRadius = radiusDp * dp }
-
-    private fun cardBox() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = round(card, 16) }
-
-    private fun text(t: String, size: Float, color: Int) = TextView(this).apply { text = t; textSize = size; setTextColor(color) }
-
-    private fun title(t: String, size: Float) = text(t, size, ink).apply { typeface = Typeface.DEFAULT_BOLD }
-
-    private fun section(t: String) = text(t.uppercase(), 13f, sub).apply { setPadding((8 * dp).toInt(), 0, 0, 0) }
-
-    private fun banner(t: String) = text(t, 13f, 0xFF8A5A00.toInt()).apply {
-        setPadding((14 * dp).toInt(), (10 * dp).toInt(), (14 * dp).toInt(), (10 * dp).toInt())
-        background = round(0xFFFFF3D6.toInt(), 12)
-    }
-
-    private fun swatchDot(argb: Int, sizeDp: Int) = View(this).apply {
-        background = if (argb == GlassStyle.AUTO) GradientDrawable(GradientDrawable.Orientation.TL_BR,
-            intArrayOf(0xFFFF6B6B.toInt(), 0xFFFFD93D.toInt(), 0xFF6BCB77.toInt(), 0xFF4D96FF.toInt())).apply { shape = GradientDrawable.OVAL }
-        else GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Palette.rgb(argb)) }
-        minimumWidth = (sizeDp * dp).toInt(); minimumHeight = (sizeDp * dp).toInt()
-    }
-
-    private fun chip(t: String) = text(t, 15f, ink).apply {
-        gravity = Gravity.CENTER
-        setPadding((14 * dp).toInt(), (8 * dp).toInt(), (14 * dp).toInt(), (8 * dp).toInt())
-        styleChip(this)
-    }
-
-    private fun styleChip(v: TextView) {
-        v.background = GradientDrawable().apply {
-            cornerRadius = 18 * dp
-            if (v.isSelected) { setColor(accent); v.setTextColor(Color.WHITE) }
-            else { setColor(if (night) 0xFF2C2C2E.toInt() else 0xFFEDEDF0.toInt()); v.setTextColor(ink) }
-        }
-    }
-
-    private fun toggleRow(label: String, on: Boolean, change: (Boolean) -> Unit) = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-        setPadding((16 * dp).toInt(), (12 * dp).toInt(), (12 * dp).toInt(), (12 * dp).toInt())
-        addView(text(label, 16f, ink), LinearLayout.LayoutParams(0, -2, 1f))
-        addView(Switch(this@SettingsActivity).apply { isChecked = on; setOnCheckedChangeListener { _, v -> change(v) } })
-    }
-
-    private fun restartRow(label: String, pkgs: List<String>) = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-        setPadding((16 * dp).toInt(), (12 * dp).toInt(), (12 * dp).toInt(), (12 * dp).toInt())
-        addView(text(label, 16f, ink), LinearLayout.LayoutParams(0, -2, 1f))
-        addView(text("Restart", 15f, accent).apply {
-            setPadding((12 * dp).toInt(), (6 * dp).toInt(), (12 * dp).toInt(), (6 * dp).toInt())
-            setOnClickListener { restartPackages(pkgs) }
-        })
-    }
-
-    /** Kills each package's processes as root; the system respawns them with the hooks reloaded. */
-    private fun restartPackages(pkgs: List<String>) {
-        io.execute {
-            // Restart System UI last: it takes this app's toast with it on some builds.
-            val ordered = pkgs.sortedBy { it == "com.android.systemui" }
-            val script = ordered.joinToString("; ") {
-                if (it == "com.android.systemui") "kill \$(pidof $it)" else "am force-stop $it"
-            }
-            val ok = try {
-                val p = ProcessBuilder("su", "-c", script).redirectErrorStream(true).start()
-                p.inputStream.readBytes(); p.waitFor() == 0
-            } catch (e: Exception) { false }
-            runOnUiThread {
-                Toast.makeText(this, if (ok) "Restarted" else "Restart failed: root (su) unavailable", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    private fun sliderRow(label: String, value: Int, max: Int, unit: String, change: (Int) -> Unit) = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding((16 * dp).toInt(), (10 * dp).toInt(), (16 * dp).toInt(), (6 * dp).toInt())
-        val head = LinearLayout(this@SettingsActivity).apply { orientation = LinearLayout.HORIZONTAL }
-        val valueText = text("$value$unit", 15f, sub)
-        head.addView(text(label, 16f, ink), LinearLayout.LayoutParams(0, -2, 1f))
-        head.addView(valueText)
-        addView(head)
-        addView(SeekBar(this@SettingsActivity).apply {
-            this.max = max; progress = value
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(b: SeekBar, v: Int, user: Boolean) { if (user) { valueText.text = "$v$unit"; change(v) } }
-                override fun onStartTrackingTouch(b: SeekBar) {}
-                override fun onStopTrackingTouch(b: SeekBar) {}
-            })
-        })
+    private fun closeOverlay() {
+        overlay?.let { root.removeView(it) }
+        overlay = null
     }
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         when {
             overlay != null -> closeOverlay()
+            tabs.selected != 0 -> showTab(0, animate = true)
             else -> @Suppress("DEPRECATION") super.onBackPressed()
         }
     }
 
-    companion object {
-        private const val REQ_IMAGE = 7
-        private val SCOPED = listOf(
-            "Launcher" to "com.zte.mifavor.launcher",
-            "System UI (notifications, control centre)" to "com.android.systemui",
-            "Lock screen" to "com.zte.mfvkeyguard",
-            "Widget board" to "com.zte.mifavor.miboard",
+    // ---------- small builders
+
+    private fun pane(radiusDp: Float) = GlassPane(this, theme, backdrop, radiusDp).also { panes.add(it) }
+
+    private fun column() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(px(16), 0, px(16), 0) }
+
+    private fun gapBelow() = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = px(10) }
+
+    private fun round(color: Int, radiusDp: Int) = GradientDrawable().apply { setColor(color); cornerRadius = radiusDp * dp }
+
+    private fun text(t: String, size: Float, color: Int = theme.ink) = TextView(this).apply {
+        text = t
+        textSize = size
+        setTextColor(color)
+        gravity = Gravity.CENTER_VERTICAL
+    }
+
+    private fun banner() = text("Enable nebulaColorize in Vector, then reopen this app.", 14f, 0xFF6B4500.toInt()).apply {
+        setPadding(px(16), px(10), px(16), px(10))
+        background = round(0xFFFFE8B8.toInt(), 20)
+    }
+
+    private fun button(label: String, icon: Int, action: () -> Unit) = LinearLayout(this).apply {
+        gravity = Gravity.CENTER
+        contentDescription = label
+        setOnClickListener { action() }
+        val image = ImageView(context).apply { setImageResource(icon) }
+        val title = text(label, 15f)
+        addView(image, LinearLayout.LayoutParams(px(20), px(20)).apply { marginEnd = px(8) })
+        addView(title)
+        bindings.add {
+            background = round(theme.container, 26)
+            image.setColorFilter(theme.onContainer)
+            title.setTextColor(theme.onContainer)
+        }
+    }
+
+    private class Area(val title: String, val surfaces: List<Surface>)
+
+    private companion object {
+        const val REQ_IMAGE = 7
+        const val STATE_TAB = "tab"
+        const val STATE_SCOPE = "scope"
+        /** From the lock screen's long-press menu (hook/LockLongPress): open on the lock-screen settings. */
+        const val EXTRA_SECTION = "section"
+        const val SECTION_LOCK = "lock"
+        const val SYSTEM_UI = "com.android.systemui"
+        const val LOCK_SCREENS = "com.zte.mifavor.keyguard.personalclock.MyLockScreenSettingsActivity"
+        const val SWATCH_CLEAR = 0x28FFFFFF
+        val OTHER_PACKAGES = listOf("com.zte.mifavor.launcher", "com.zte.mfvkeyguard", "com.zte.mifavor.miboard")
+        val HUES = IntArray(7) { Color.HSVToColor(floatArrayOf(it * 60f, 0.72f, 0.96f)) }
+
+        // The dock stays on its own: it is opt-in, so the Home screen switch mustn't turn it on.
+        val AREAS = listOf(
+            Area("Home screen", listOf(Surface.FOLDER, Surface.POPUP, Surface.HOME_CLOCK, Surface.HOME_WIDGET)),
+            Area("Dock", listOf(Surface.DOCK)),
+            Area("Widget board", listOf(Surface.WIDGET_BOARD)),
+            Area("Lock screen", listOf(Surface.LOCK_CLOCK, Surface.LOCK_WIDGET, Surface.LOCK_SHORTCUT, Surface.LOCK_CARD)),
+            Area("Notifications", listOf(Surface.NOTIFICATION)),
+            Area("Control centre", listOf(Surface.CONTROL_CENTER)),
         )
-        private val io = Executors.newSingleThreadExecutor()
+        val io = Executors.newSingleThreadExecutor()
     }
 }

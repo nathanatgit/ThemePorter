@@ -3,10 +3,10 @@ plugins {
     id 'org.jetbrains.kotlin.android' version '2.3.20'
 }
 android {
-    namespace 'com.nathanhanapps.nebulaColorize'
+    namespace 'com.nathanhanapps.nebulacolorize'
     compileSdk 36
     defaultConfig {
-        applicationId 'com.nathanhanapps.nebulaColorize'
+        applicationId 'com.nathanhanapps.nebulacolorize'
         minSdk 31
         targetSdk 32
         versionCode 1

@@ -1,7 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
  <!-- Live settings broadcasts to SystemUI and the launcher: only this app may send them. -->
- <permission android:name="com.nathanhanapps.nebulaColorize.permission.SETTINGS" android:protectionLevel="signature"/>
- <uses-permission android:name="com.nathanhanapps.nebulaColorize.permission.SETTINGS"/>
+ <permission android:name="com.nathanhanapps.nebulacolorize.permission.SETTINGS" android:protectionLevel="signature"/>
+ <uses-permission android:name="com.nathanhanapps.nebulacolorize.permission.SETTINGS"/>
  <!-- Optional, user-granted: Android only lets apps with all-files access read the wallpaper image (ink picker). -->
  <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
  <application android:label="nebulaColorize" android:allowBackup="false">
@@ -19,5 +19,8 @@
     <category android:name="de.robv.android.xposed.category.MODULE_SETTINGS"/>
    </intent-filter>
   </activity>
+  <!-- The lock-screen editor (System UI) saves the clock here; the provider rejects every other caller. -->
+  <provider android:name="dev.nebula.glass.ui.LayoutProvider" android:exported="true"
+      android:authorities="com.nathanhanapps.nebulacolorize.layout"/>
  </application>
 </manifest>

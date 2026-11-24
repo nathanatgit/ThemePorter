@@ -15,8 +15,9 @@ import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage
 import dev.nebula.glass.CompositeBackdrop
 import dev.nebula.glass.GlassDrawable
-import dev.nebula.glass.GlassMaterial
-import dev.nebula.glass.LensGlass
+import dev.nebula.glass.GlassSettings
+import dev.nebula.glass.Looks
+import dev.nebula.glass.Surface
 import dev.nebula.glass.WallpaperBackdrop
 
 /**
@@ -29,7 +30,7 @@ import dev.nebula.glass.WallpaperBackdrop
  * ([CompositeBackdrop]); row fills are cleared so the glass shows, ripples and text stay stock.
  * Light/dark follows the system night mode, keeping Nubia's own text colours legible.
  *
- * Switch: adb shell am broadcast -a com.nathanhanapps.nebulaColorize.POPUP --es mode glass|stock --es style native|pill
+ * Switch: adb shell am broadcast -a com.nathanhanapps.nebulacolorize.POPUP --es mode glass|stock --es style native|pill
  */
 class LauncherPopup : IXposedHookLoadPackage {
     private var enabled = true
@@ -42,6 +43,7 @@ class LauncherPopup : IXposedHookLoadPackage {
 
     override fun handleLoadPackage(app: XC_LoadPackage.LoadPackageParam) {
         if (app.packageName != LAUNCHER || app.processName != LAUNCHER) return
+        HookSettings.load()
         val popup = XposedHelpers.findClassIfExists("com.android.launcher3.popup.PopupContainerWithArrow", app.classLoader)
             ?: run { Log.w(TAG, "popup class not found"); return }
         try {
@@ -59,6 +61,10 @@ class LauncherPopup : IXposedHookLoadPackage {
 
     private fun style(popup: ViewGroup) {
         val ctx = popup.context
+        HookSettings.attach(ctx)
+        // Read per menu: the settings app can't be open over one.
+        val st = GlassSettings[Surface.POPUP]
+        if (!st.enabled) return
         val back = composite ?: CompositeBackdrop(ctx.applicationContext, WallpaperBackdrop.shared(ctx)).also {
             composite = it
             registerSwitch(ctx.applicationContext)
@@ -87,30 +93,21 @@ class LauncherPopup : IXposedHookLoadPackage {
         for (panel in panels) {
             val original = panel.background
             if (original is GlassDrawable) continue
-            val lens = LensGlass().apply {
-                val dp = panel.resources.displayMetrics.density
-                material = GlassMaterial.REGULAR
-                blurAmount = 0.8f                 // ≈ 30 px: icons behind read as colour, not shapes
-                saturation = 170f
-                glassTint = if (night) 0xB82A2A2E.toInt() else 0xB8F7F7F9.toInt()
-                bevelWidth = 8 * dp
-                refractionHeight = 14 * dp
-                dispersion = 0.04f
-                specular = 0.7f
-                val horizontalRow = panel is android.widget.LinearLayout &&
-                    panel.orientation == android.widget.LinearLayout.HORIZONTAL
-                cornerRadius = when {
-                    horizontalRow && style == "pill" -> 999f
-                    else -> corner(original) ?: outlineRadius(panel) ?: outlineRadius(popup) ?: (16 * dp)
-                }
-                refreshAccessibility(ctx)
+            val dp = panel.resources.displayMetrics.density
+            val horizontalRow = panel is android.widget.LinearLayout &&
+                panel.orientation == android.widget.LinearLayout.HORIZONTAL
+            val radius = when {
+                horizontalRow && style == "pill" -> 999f
+                else -> corner(original) ?: outlineRadius(panel) ?: outlineRadius(popup) ?: (16 * dp)
             }
+            val lens = Looks.base(Surface.POPUP, ctx, night)
+            Looks.style(lens, Surface.POPUP, dp, radius, night, st = st)
             panel.background = GlassDrawable(panel, lens, original) {
                 back.glass = panel
                 back
             }
         }
-        tintArrow(popup, night)
+        tintArrow(popup, night, Looks.body(Surface.POPUP, st, night))
         Log.i(TAG, "popup glass on ${panels.size} panels style=$style night=$night")
     }
 
@@ -119,9 +116,13 @@ class LauncherPopup : IXposedHookLoadPackage {
      * SRC_IN colour filter recolours whatever it draws and keeps its alpha, so the arrow's own
      * drawable class does not matter. Uses the glass body tint so arrow and panel read as one.
      */
-    private fun tintArrow(popup: ViewGroup, night: Boolean) {
+    private fun tintArrow(popup: ViewGroup, night: Boolean, body: Int) {
         val dp = popup.resources.displayMetrics.density
-        val tint = if (night) 0xFF2A2A2E.toInt() else 0xFFF7F7F9.toInt()
+        // The arrow has no glass behind it, so it gets the body laid over the menu's built-in colour.
+        val base = Looks.tint(Surface.POPUP, night)
+        val a = (body ushr 24) / 255f
+        fun mix(shift: Int) = Math.round(((body shr shift) and 0xFF) * a + ((base shr shift) and 0xFF) * (1 - a))
+        val tint = android.graphics.Color.rgb(mix(16), mix(8), mix(0))
         for (i in 0 until popup.childCount) {
             val c = popup.getChildAt(i)
             if (c is ViewGroup || c.background == null || c.width == 0) continue
@@ -172,7 +173,7 @@ class LauncherPopup : IXposedHookLoadPackage {
     companion object {
         private const val TAG = "NebulaGlass"
         private const val LAUNCHER = "com.zte.mifavor.launcher"
-        const val SWITCH = "com.nathanhanapps.nebulaColorize.POPUP"
+        const val SWITCH = "com.nathanhanapps.nebulacolorize.POPUP"
 
         private inline fun guard(block: () -> Unit) {
             try { block() } catch (t: Throwable) { Log.e(TAG, "popup", t) }

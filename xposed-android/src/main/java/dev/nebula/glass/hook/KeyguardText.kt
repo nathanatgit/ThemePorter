@@ -34,7 +34,7 @@ import java.util.WeakHashMap
  * `clock_view` (mifavor TextClock), `date_view` (DateView), `lunar_date_widget_horiz`.
  * The editor activity is left alone (different window and backdrop).
  *
- * Switch: adb shell am broadcast -a com.nathanhanapps.nebulaColorize.KEYGUARDTEXT --es mode glass|stock
+ * Switch: adb shell am broadcast -a com.nathanhanapps.nebulacolorize.KEYGUARDTEXT --es mode glass|stock
  */
 class KeyguardText : IXposedHookLoadPackage {
     private var enabled = true
@@ -46,17 +46,24 @@ class KeyguardText : IXposedHookLoadPackage {
 
     override fun handleLoadPackage(app: XC_LoadPackage.LoadPackageParam) {
         if (app.packageName != SYSTEMUI || app.processName != SYSTEMUI) return
+        if (installed) return   // SystemUI calls this twice, the second time with another classloader
+        installed = true
         HookSettings.load()
         GlassSettings.addListener { for (t in live.toList()) t.postInvalidate() }
         try {
             XposedHelpers.findAndHookMethod(TextView::class.java, "onDraw", Canvas::class.java, object : XC_MethodHook() {
                 override fun beforeHookedMethod(p: MethodHookParam) {
                     val style = GlassSettings[Surface.LOCK_CLOCK]
-                    if (!enabled || !style.enabled) return
                     val tv = p.thisObject as TextView
                     try {
-                        if (!isTarget(tv)) return
-                        if (glass.draw(tv, p.args[0] as Canvas, source(tv), style)) p.result = null
+                        val glassy = enabled && style.enabled && isTarget(tv)
+                        // The resized clock draws with or without glass, and in the editor too.
+                        if (LockClock.draw(tv, p.args[0] as Canvas, if (glassy) style else null, glass) { source(tv) }) {
+                            p.result = null
+                            return
+                        }
+                        if (!glassy) return
+                        if (glass.draw(tv, p.args[0] as Canvas, source(tv), style, neutral = true)) p.result = null
                     } catch (t: Throwable) { Log.e(TAG, "keyguard text", t) }
                 }
             })
@@ -71,14 +78,20 @@ class KeyguardText : IXposedHookLoadPackage {
         if (!tv.isAttachedToWindow) return false
         var ok = false
         val id = idName(tv)
-        val wanted = id == "clock_view" || id == "date_view" || id == "lunar_date_widget_horiz" ||
-            tv.javaClass.simpleName == "TextClock"
-        // AOD lives in its own DecorView window: leave it stock.
-        if (wanted && activityOf(tv.context) == null && tv.rootView.javaClass.simpleName.startsWith("NotificationShade")) {
+        // Every text clock style's digits (default, incarnation, horizontal, vertical, clip), the
+        // calendar lines, and the custom text under the clock ("owner_info").
+        // Not the editor's style thumbnails: they stay stock ([GlassTextHost.inList]).
+        val wanted = (id in IDS || tv is android.widget.TextClock) && !GlassTextHost.inList(tv)
+        // AOD lives in its own DecorView window: leave it stock. Nubia's editor shows the lock
+        // screen full size over the same wallpaper, so it gets glass too (user request 2026-11-24).
+        val activity = activityOf(tv.context)
+        val host = if (activity == null) tv.rootView.javaClass.simpleName.startsWith("NotificationShade")
+            else activity.javaClass.name == LockEditor.ACTIVITY
+        if (wanted && host) {
             var p: ViewParent? = tv.parent
             while (p != null) {
-                if (p is View && (idName(p) == "keyguard_clock_container" ||
-                        p.javaClass.name.contains("LockScreenClock"))) { ok = true; break }
+                if (p is View && (idName(p) in CONTAINERS ||
+                        p.javaClass.name.contains("LockScreenClock") || p.javaClass.simpleName == "ClockStatusView")) { ok = true; break }
                 p = p.parent
             }
         }
@@ -123,7 +136,13 @@ class KeyguardText : IXposedHookLoadPackage {
 
     companion object {
         private const val TAG = "NebulaGlass"
+        private var installed = false
         private const val SYSTEMUI = "com.android.systemui"
-        const val SWITCH = "com.nathanhanapps.nebulaColorize.KEYGUARDTEXT"
+        const val SWITCH = "com.nathanhanapps.nebulacolorize.KEYGUARDTEXT"
+        private val IDS = setOf(
+            "clock_view", "date_view", "lunar_date_widget_horiz", "lunar_date_widget", "owner_info",
+            "hours", "minute", "month", "day", "clock_hour_view", "clock_minute_view",
+        )
+        private val CONTAINERS = setOf("keyguard_clock_container", "clock_status_view", "keyguard_status_view")
     }
 }

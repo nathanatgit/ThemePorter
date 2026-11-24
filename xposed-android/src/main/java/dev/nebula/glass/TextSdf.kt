@@ -69,11 +69,18 @@ object TextSdf {
     fun build(text: String, paint: Paint, range: Float): Result? {
         if (text.isEmpty()) return null
 
-        val ss = SUPERSAMPLE
-        val padView = ceil(range).toInt().coerceAtLeast(2)
-
         val path = Path()
         paint.getTextPath(text, 0, text.length, 0f, 0f, path)
+        return buildPath(path, range)
+    }
+
+    /**
+     * Distance field of an outline; origin = the path's (0,0).
+     * @param supersample 1 is enough for display digits, and a screen-wide field at 2 takes about 100 MB
+     */
+    fun buildPath(path: Path, range: Float, supersample: Int = SUPERSAMPLE): Result? {
+        val ss = supersample
+        val padView = ceil(range).toInt().coerceAtLeast(2)
         val bounds = RectF()
         path.computeBounds(bounds, true)
         if (bounds.width() < 1f || bounds.height() < 1f) return null

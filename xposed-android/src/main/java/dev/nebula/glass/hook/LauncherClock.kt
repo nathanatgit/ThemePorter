@@ -30,7 +30,7 @@ import java.util.WeakHashMap
  * re-records a bound clock whenever its screen position changes (as the folder tiles do).
  * Drag shadows and previews draw on software canvases, where glass declines and stock is drawn.
  *
- * Switch: adb shell am broadcast -a com.nathanhanapps.nebulaColorize.CLOCKWIDGET --es mode glass|stock
+ * Switch: adb shell am broadcast -a com.nathanhanapps.nebulacolorize.CLOCKWIDGET --es mode glass|stock
  */
 class LauncherClock : IXposedHookLoadPackage {
     private var enabled = true
@@ -130,6 +130,6 @@ class LauncherClock : IXposedHookLoadPackage {
         private const val TAG = "NebulaGlass"
         private const val LAUNCHER = "com.zte.mifavor.launcher"
         private val IDS = setOf("appwidget_text_time_mfvclr", "appwidget_text_day_week_mfvclr")
-        const val SWITCH = "com.nathanhanapps.nebulaColorize.CLOCKWIDGET"
+        const val SWITCH = "com.nathanhanapps.nebulacolorize.CLOCKWIDGET"
     }
 }

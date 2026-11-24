@@ -54,7 +54,7 @@ open class SurfaceTrace(
                 }
             })
         } catch (t: Throwable) { Log.w(TAG, "hook onResume", t) }
-        // On demand: `am broadcast -a com.nathanhanapps.nebulaColorize.DUMP` (shell holds DUMP) logs every window tree.
+        // On demand: `am broadcast -a com.nathanhanapps.nebulacolorize.DUMP` (shell holds DUMP) logs every window tree.
         try {
             XposedHelpers.findAndHookMethod(Application::class.java, "onCreate", object : XC_MethodHook() {
                 override fun afterHookedMethod(p: MethodHookParam) {
@@ -201,7 +201,7 @@ open class SurfaceTrace(
 
     companion object {
         internal const val TAG = "NebulaGlass"
-        internal const val DUMP_ACTION = "com.nathanhanapps.nebulaColorize.DUMP"
+        internal const val DUMP_ACTION = "com.nathanhanapps.nebulacolorize.DUMP"
     }
 }
 

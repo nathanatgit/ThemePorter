@@ -34,7 +34,7 @@ import java.lang.ref.WeakReference
  * Wallpaper parallax follows the launcher's own setWallpaperOffsets calls.
  *
  * Test switch, shell only (needs DUMP):
- *   adb shell am broadcast -a com.nathanhanapps.nebulaColorize.DOCK --es mode glass|raw|off
+ *   adb shell am broadcast -a com.nathanhanapps.nebulacolorize.DOCK --es mode glass|raw|off
  * `raw` paints the unfiltered backdrop inside the panel: if the crop matches ImageWallpaper,
  * the panel area is indistinguishable from the real wallpaper.
  */
@@ -123,12 +123,49 @@ class LauncherDock : IXposedHookLoadPackage {
         private val clip = Path()
         private val a = IntArray(2)
         private val b = IntArray(2)
+        private val loc = IntArray(2)
+        private var recX = Int.MIN_VALUE
+        private var recY = Int.MIN_VALUE
+        private var observer: android.view.ViewTreeObserver? = null
+
+        // The panel is recorded into the drawable's own RenderNode with a sample offset taken from the
+        // host's screen position. During unlock the Hotseat is transiently far off-screen; without this
+        // the panel stays recorded against that position (samples outside the wallpaper = dark).
+        private val preDraw = android.view.ViewTreeObserver.OnPreDrawListener {
+            try {
+                if (host.isShown) {
+                    host.getLocationOnScreen(loc)
+                    if (loc[0] != recX || loc[1] != recY) invalidateSelf()
+                }
+            } catch (_: Throwable) {}
+            true
+        }
+
+        init {
+            host.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(v: View) = watch()
+                override fun onViewDetachedFromWindow(v: View) = unwatch()
+            })
+            if (host.isAttachedToWindow) watch()
+        }
+
+        private fun watch() {
+            if (observer != null) return
+            observer = host.viewTreeObserver.also { it.addOnPreDrawListener(preDraw) }
+        }
+
+        private fun unwatch() {
+            observer?.takeIf { it.isAlive }?.removeOnPreDrawListener(preDraw)
+            observer = null
+        }
 
         override fun draw(canvas: Canvas) {
             guard {
+                host.getLocationOnScreen(loc)
+                recX = loc[0]; recY = loc[1]
                 if (!panel()) return@guard
-                // Unified look: intensity, edge glow and accent from the settings app. Like folders and
-                // widgets, 100 % intensity samples the shared pre-blurred wallpaper (no GPU blur).
+                // Unified look: style, blur and glow from the settings app. Like folders and
+                // widgets, 100 % blur samples the shared pre-blurred wallpaper (no GPU blur).
                 val dp = host.resources.displayMetrics.density
                 val st = GlassSettings[Surface.DOCK]
                 val pre = st.blur == 100
@@ -138,7 +175,9 @@ class LauncherDock : IXposedHookLoadPackage {
                 if (root.width > 0) source.layoutTo(root.width, root.height)
                 if (raw) { drawRaw(canvas); return@guard }
                 val ok = !source.isLive && source.bitmap != null && glass.draw(canvas, host, source, shape)
-                if (!ok) glass.drawOpaque(canvas, host, shape)
+                // Wallpaper still loading (first unlock): draw nothing rather than a dark slab. The
+                // backdrop listener redraws once it arrives. Opaque fallback only for live wallpapers.
+                if (!ok && source.isLive) glass.drawOpaque(canvas, host, shape)
             }
         }
 
@@ -165,13 +204,18 @@ class LauncherDock : IXposedHookLoadPackage {
             union(host)
             val top: Float
             val bottom: Float
+            // Auto-fit to the icons' real bounds (so any DPI), then the user's width and padding.
+            val shapes = GlassSettings.config.shapes
+            val pad = shapes.dockPad * dp
             if (icons.isEmpty) {
                 top = h * 0.12f; bottom = h * 0.78f
             } else {
-                top = (icons.top - 12 * dp).coerceAtLeast(0f)
-                bottom = (icons.bottom + 12 * dp).coerceAtMost(h)
+                top = (icons.top - pad).coerceAtLeast(0f)
+                bottom = (icons.bottom + pad).coerceAtMost(h)
             }
-            shape.set(12 * dp, top, w - 12 * dp, bottom)
+            val full = w - 24 * dp
+            val width = full * shapes.dockWidth / 100f
+            shape.set((w - width) / 2f, top, (w + width) / 2f, bottom)
             glass.cornerRadius = minOf(30 * dp, shape.height() / 2f)
             return shape.width() > 0f && shape.height() > 0f
         }
@@ -209,7 +253,7 @@ class LauncherDock : IXposedHookLoadPackage {
     companion object {
         private const val TAG = "NebulaGlass"
         private const val LAUNCHER = "com.zte.mifavor.launcher"
-        const val SWITCH = "com.nathanhanapps.nebulaColorize.DOCK"
+        const val SWITCH = "com.nathanhanapps.nebulacolorize.DOCK"
 
         /** A throw inside the launcher's draw or attach path must never escape. */
         private inline fun guard(block: () -> Unit) {

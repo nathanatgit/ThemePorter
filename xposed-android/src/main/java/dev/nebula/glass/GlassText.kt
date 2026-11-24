@@ -43,7 +43,7 @@ class GlassText {
     @Volatile private var sdf: TextSdf.Result? = null
     private var sdfShader: BitmapShader? = null
     private var builtKey: String? = null
-    private var pendingKey: String? = null
+    @Volatile private var pendingKey: String? = null
     private var textSize = 0f
 
     private val node = RenderNode("NebulaGlassText")
@@ -96,6 +96,64 @@ class GlassText {
         }
     }
 
+    /**
+     * Upstream's optics are for display digits. On small text (the date, lunar date) the inner shadow
+     * and dispersion are wider than a stroke and doubled every one, so they fade out as text shrinks.
+     * The lit edge and a see-through body stay: they are what makes it read as glass.
+     * @param bodyColour the glyphs' colour; its alpha is scaled by the body share
+     * @param luma of the backdrop, 0..1
+     * @return the body colour for this size
+     */
+    fun tuneFor(size: Float, bodyColour: Int, luma: Float, glow: Float): Int {
+        // Upstream scales refraction/bevel with text size; on a 300 px clock's thin strokes that swallows the glyphs. Cap in px.
+        refractFactor = minOf(0.45f, 28f / size)
+        bevelFactor = minOf(0.02f, 8f / size)
+        val display = ((size - SMALL_TEXT_PX) / (DISPLAY_TEXT_PX - SMALL_TEXT_PX)).coerceIn(0f, 1f)
+        innerShadow = INNER_SHADOW * display
+        dispersion = DISPERSION * display
+        specStrength = (if (luma > 0.5f) 1.6f else 2.49f) * glow * (SMALL_EDGE + (1 - SMALL_EDGE) * display)
+        val share = DISPLAY_BODY + (SMALL_BODY - DISPLAY_BODY) * (1 - display)
+        return Color.argb((share * Color.alpha(bodyColour)).toInt(), Color.red(bodyColour), Color.green(bodyColour), Color.blue(bodyColour))
+    }
+
+    /** Glass in the shape of display digits ([ClockFace]). [path]'s (0,0) is the origin passed to [draw]. */
+    fun setShape(path: android.graphics.Path, key: String, stroke: Float) {
+        // Thin strokes can't carry the full bevel and refraction without turning inside out.
+        bevelPx = minOf(8f, stroke * 0.3f).coerceAtLeast(3f)
+        refractPx = minOf(28f, stroke * 0.8f).coerceAtLeast(4f)
+        val id = "shape|$key"
+        if (id == builtKey || id == pendingKey) return
+        pendingKey = id
+        val copy = android.graphics.Path(path)
+        val range = (max(bevel, refract) * 1.35f + 6f).coerceIn(24f, 72f)
+        val height = android.graphics.RectF().also { copy.computeBounds(it, true) }.height()
+        val supersample = if (height > LARGE_SHAPE_PX) 1 else TextSdf.SUPERSAMPLE
+        worker.execute {
+            if (pendingKey != id) return@execute   // superseded while queued
+            val t0 = System.nanoTime()
+            val result = try { TextSdf.buildPath(copy, range, supersample) } catch (e: Throwable) { Log.w(TAG, "shape SDF failed", e); null }
+            main.post {
+                if (pendingKey != id) { result?.bitmap?.recycle(); return@post }
+                pendingKey = null
+                val old = sdf
+                sdf = result
+                builtKey = id
+                sdfShader = result?.let {
+                    BitmapShader(it.bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
+                        filterMode = BitmapShader.FILTER_MODE_NEAREST
+                    }
+                }
+                effectKey = null
+                old?.bitmap?.recycle()
+                Log.i(TAG, "shape SDF ${result?.bitmap?.width}x${result?.bitmap?.height} in ${(System.nanoTime() - t0) / 1_000_000}ms")
+                onReady?.invoke()
+            }
+        }
+    }
+
+    /** True once the field for [key] is the one [draw] would use. */
+    fun hasShape(key: String) = builtKey == "shape|$key" && sdf != null
+
     /** Rebuild the distance field when text, size or typeface change. Cheap if unchanged. */
     fun setText(text: CharSequence, paint: Paint) {
         val t = text.toString()
@@ -106,6 +164,7 @@ class GlassText {
         val size = paint.textSize
         val range = (max(max(size * bevelFactor, 3f), max(size * refractFactor, 4f)) * 1.35f + 6f).coerceIn(24f, 72f)
         worker.execute {
+            if (pendingKey != key) return@execute   // superseded while queued (a size being dragged)
             val t0 = System.nanoTime()
             val result = try { TextSdf.build(t, copy, range) } catch (e: Throwable) { Log.w(TAG, "SDF failed", e); null }
             main.post {
@@ -132,14 +191,20 @@ class GlassText {
      * Draws the glass glyphs with the text origin (x = 0, baseline) at ([originX], [baseline])
      * in [glass]-local coordinates. Returns false when the caller must draw stock text.
      */
-    fun draw(canvas: Canvas, glass: View, backdrop: View?, originX: Float, baseline: Float): Boolean {
+    fun draw(
+        canvas: Canvas, glass: View, backdrop: View?, originX: Float, baseline: Float,
+        /** The area the glyphs may cover, in [glass]'s coordinates; null = the view. May reach past it. */
+        area: android.graphics.Rect? = null,
+    ): Boolean {
         if (broken || !canvas.isHardwareAccelerated) return false
         if (GlassRegistry.isCapturing(glass)) return false
         val s = sdf ?: return false
         val bmp = sdfShader ?: return false
         val source = backdrop ?: glass.parent as? View ?: return false
-        val w = glass.width
-        val h = glass.height
+        val left = area?.left ?: 0
+        val top = area?.top ?: 0
+        val w = area?.width() ?: glass.width
+        val h = area?.height() ?: glass.height
         if (w <= 0 || h <= 0) return false
         val sh = shader ?: try {
             RuntimeShader(TEXT_LENS_AGSL).also { shader = it }
@@ -147,8 +212,8 @@ class GlassText {
             Log.e(TAG, "Text lens AGSL compile failed", e); broken = true; return false
         }
         val margin = (refract + blurRadius * 3f).toInt().coerceAtLeast(8)
-        val offX = originX - s.originX
-        val offY = baseline - s.originY
+        val offX = originX - left - s.originX
+        val offY = baseline - top - s.originY
         val key = listOf(s, offX, offY, w, h, margin, bevel, refract, blurRadius, dispersion,
             specStrength, innerShadow, saturation, tint, dim, lightX, lightY)
         if (key != effectKey) {
@@ -183,9 +248,9 @@ class GlassText {
         }
         glass.getLocationOnScreen(loc)
         source.getLocationOnScreen(srcLoc)
-        val dx = (loc[0] - srcLoc[0]).toFloat()
-        val dy = (loc[1] - srcLoc[1]).toFloat()
-        node.setPosition(-margin, -margin, w + margin, h + margin)
+        val dx = (loc[0] - srcLoc[0] + left).toFloat()
+        val dy = (loc[1] - srcLoc[1] + top).toFloat()
+        node.setPosition(left - margin, top - margin, left + w + margin, top + h + margin)
         val rc = node.beginRecording(w + 2 * margin, h + 2 * margin)
         try {
             rc.translate(margin - dx, margin - dy)
@@ -212,6 +277,16 @@ class GlassText {
 
     companion object {
         private const val TAG = "NebulaGlass"
+        private const val LARGE_SHAPE_PX = 420f
+        private const val SMALL_TEXT_PX = 48f
+        private const val DISPLAY_TEXT_PX = 140f
+        private const val INNER_SHADOW = 1.47f
+        private const val DISPERSION = 0.14f
+        /** Share of the text colour in the body of display digits; the rest is refracted wallpaper. */
+        private const val DISPLAY_BODY = 0.62f
+        private const val SMALL_BODY = 0.66f
+        /** Share of the lit edge small text keeps. */
+        private const val SMALL_EDGE = 0.75f
         private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "NebulaGlassSdf").apply { isDaemon = true } }
         private val main = Handler(Looper.getMainLooper())
 
