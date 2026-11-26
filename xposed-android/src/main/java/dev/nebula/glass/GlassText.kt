@@ -33,6 +33,8 @@ class GlassText {
     var innerShadow = 1.47f
     var saturation = 130f
     var tint = Color.argb(58, 255, 255, 255)
+    var edgeColor = Color.WHITE
+    var glowColor = Color.WHITE
     var dim = 0f
     var lightX = 0.35f
     var lightY = -0.94f
@@ -104,23 +106,32 @@ class GlassText {
      * @param luma of the backdrop, 0..1
      * @return the body colour for this size
      */
-    fun tuneFor(size: Float, bodyColour: Int, luma: Float, glow: Float): Int {
-        // Upstream scales refraction/bevel with text size; on a 300 px clock's thin strokes that swallows the glyphs. Cap in px.
-        refractFactor = minOf(0.45f, 28f / size)
-        bevelFactor = minOf(0.02f, 8f / size)
+    fun tuneFor(
+        size: Float,
+        bodyColour: Int,
+        luma: Float,
+        glow: Float,
+        refraction: Float = 1f,
+        dispersionScale: Float = 1f,
+        vibrancy: Float = 1f,
+    ): Int {
+        // Upstream scales refraction/bevel with text size; cap in px and scale by user's Refraction control.
+        refractFactor = (minOf(0.45f, 28f / size) * refraction).coerceIn(0f, 1.2f)
+        bevelFactor = (minOf(0.02f, 8f / size) * (0.5f + 0.5f * refraction)).coerceIn(0.002f, 0.15f)
         val display = ((size - SMALL_TEXT_PX) / (DISPLAY_TEXT_PX - SMALL_TEXT_PX)).coerceIn(0f, 1f)
         innerShadow = INNER_SHADOW * display
-        dispersion = DISPERSION * display
+        dispersion = (DISPERSION * display * dispersionScale).coerceIn(0f, 0.85f)
+        saturation = (100f + 30f * vibrancy).coerceIn(0f, 300f)
         specStrength = (if (luma > 0.5f) 1.6f else 2.49f) * glow * (SMALL_EDGE + (1 - SMALL_EDGE) * display)
         val share = DISPLAY_BODY + (SMALL_BODY - DISPLAY_BODY) * (1 - display)
         return Color.argb((share * Color.alpha(bodyColour)).toInt(), Color.red(bodyColour), Color.green(bodyColour), Color.blue(bodyColour))
     }
 
     /** Glass in the shape of display digits ([ClockFace]). [path]'s (0,0) is the origin passed to [draw]. */
-    fun setShape(path: android.graphics.Path, key: String, stroke: Float) {
-        // Thin strokes can't carry the full bevel and refraction without turning inside out.
-        bevelPx = minOf(8f, stroke * 0.3f).coerceAtLeast(3f)
-        refractPx = minOf(28f, stroke * 0.8f).coerceAtLeast(4f)
+    fun setShape(path: android.graphics.Path, key: String, stroke: Float, refraction: Float = 1f) {
+        // Ultra-thin iOS hairline strokes (down to ~5 px) keep proportional bevel & refraction without folding.
+        bevelPx = (minOf(8f, stroke * 0.32f) * (0.5f + 0.5f * refraction)).coerceAtLeast(1.5f)
+        refractPx = (minOf(28f, stroke * 0.82f) * refraction).coerceAtLeast(2.2f)
         val id = "shape|$key"
         if (id == builtKey || id == pendingKey) return
         pendingKey = id
@@ -154,10 +165,16 @@ class GlassText {
     /** True once the field for [key] is the one [draw] would use. */
     fun hasShape(key: String) = builtKey == "shape|$key" && sdf != null
 
+    private fun textKey(t: String, paint: Paint) =
+        "$t|${paint.textSize}|${paint.typeface?.hashCode()}|${paint.textSkewX}|${paint.letterSpacing}|${paint.fontVariationSettings}"
+
+    /** True once the SDF for the current text and font size has finished building. */
+    fun hasText(text: CharSequence, paint: Paint) = builtKey == textKey(text.toString(), paint) && sdf != null
+
     /** Rebuild the distance field when text, size or typeface change. Cheap if unchanged. */
     fun setText(text: CharSequence, paint: Paint) {
         val t = text.toString()
-        val key = "$t|${paint.textSize}|${paint.typeface?.hashCode()}|${paint.textSkewX}|${paint.letterSpacing}|${paint.fontVariationSettings}"
+        val key = textKey(t, paint)
         if (key == builtKey || key == pendingKey) return
         pendingKey = key
         val copy = Paint(paint).apply { isAntiAlias = true; color = Color.WHITE; style = Paint.Style.FILL }
@@ -197,7 +214,10 @@ class GlassText {
         area: android.graphics.Rect? = null,
     ): Boolean {
         if (broken || !canvas.isHardwareAccelerated) return false
-        if (GlassRegistry.isCapturing(glass)) return false
+        // Never overwrite `node` while another glass surface (e.g. a lock-screen notification card or
+        // long-press menu) is capturing the scene behind itself: let the host draw fast vector glyphs
+        // into that blurred backdrop so `node`'s live display list never tears or flickers!
+        if (GlassRegistry.isCapturing(glass) || BackdropCapture.isActive) return false
         val s = sdf ?: return false
         val bmp = sdfShader ?: return false
         val source = backdrop ?: glass.parent as? View ?: return false
@@ -215,7 +235,7 @@ class GlassText {
         val offX = originX - left - s.originX
         val offY = baseline - top - s.originY
         val key = listOf(s, offX, offY, w, h, margin, bevel, refract, blurRadius, dispersion,
-            specStrength, innerShadow, saturation, tint, dim, lightX, lightY)
+            specStrength, innerShadow, saturation, tint, edgeColor, glowColor, dim, lightX, lightY)
         if (key != effectKey) {
             try {
                 sh.setInputShader("sdfTex", bmp)
@@ -231,6 +251,10 @@ class GlassText {
                 sh.setFloatUniform("lightDir", lightX, lightY)
                 sh.setFloatUniform("specStrength", specStrength)
                 sh.setFloatUniform("innerShadow", innerShadow)
+                sh.setFloatUniform("edgeColor", Color.red(edgeColor) / 255f, Color.green(edgeColor) / 255f, Color.blue(edgeColor) / 255f)
+                sh.setFloatUniform("edgeColored", if ((edgeColor and 0x00FFFFFF) != 0x00FFFFFF) 1f else 0f)
+                sh.setFloatUniform("glowColor", Color.red(glowColor) / 255f, Color.green(glowColor) / 255f, Color.blue(glowColor) / 255f)
+                sh.setFloatUniform("glowColored", if ((glowColor and 0x00FFFFFF) != 0x00FFFFFF) 1f else 0f)
                 sh.setFloatUniform("tintColor", Color.red(tint) / 255f, Color.green(tint) / 255f,
                     Color.blue(tint) / 255f, Color.alpha(tint) / 255f)
                 sh.setFloatUniform("dimAmount", dim)
@@ -306,6 +330,10 @@ class GlassText {
             uniform float2 lightDir;
             uniform float  specStrength;
             uniform float  innerShadow;
+            uniform float3 edgeColor;
+            uniform float  edgeColored;
+            uniform float3 glowColor;
+            uniform float  glowColored;
             uniform float4 tintColor;
             uniform float  dimAmount;
             uniform float  satFactor;
@@ -397,12 +425,23 @@ class GlassText {
                 float facingPos = max(facing, 0.0);
                 float facingNeg = max(-facing, 0.0);
 
-                float bandW = clamp(bevel * 0.3, 2.0, 9.0);
+                float bandW = (glowColored > 0.5) ? clamp(bevel * 0.85, 5.0, 18.0) : clamp(bevel * 0.3, 2.0, 9.0);
                 float rim = clamp(1.0 - (-d - 0.5) / bandW, 0.0, 1.0) * cov;
-                float lobe = 0.55 * pow(facingPos, 5.0) + 0.18 * pow(facingNeg, 5.0) + 0.05;
-                float hair = clamp(1.0 - abs(d + 1.0) / 1.5, 0.0, 1.0);
-                float spec = (rim * lobe + hair * (0.22 + 0.35 * facingPos)) * specStrength;
-                col += float3(spec);
+                float lobe = 0.55 * pow(facingPos, 4.0) + 0.22 * pow(facingNeg, 4.0) + 0.08;
+                if (glowColored > 0.5) {
+                    float gAmt = clamp(rim * lobe * specStrength * 0.55, 0.0, 0.85);
+                    col = mix(col, glowColor, gAmt) + glowColor * (gAmt * 0.16);
+                } else {
+                    col += glowColor * (rim * lobe * specStrength);
+                }
+                float hairW = (edgeColored > 0.5) ? 2.4 : 1.5;
+                float hair = clamp(1.0 - abs(d + 1.0) / hairW, 0.0, 1.0);
+                if (edgeColored > 0.5) {
+                    float eAmt = clamp(hair * (0.34 + 0.45 * facingPos) * specStrength * 0.65, 0.0, 0.95);
+                    col = mix(col, edgeColor, eAmt) + edgeColor * (eAmt * 0.18);
+                } else {
+                    col += edgeColor * (hair * (0.22 + 0.35 * facingPos) * specStrength);
+                }
 
                 float shadowW = clamp(bevel, 4.0, 28.0);
                 float shadowBand = pow(clamp(1.0 + d / shadowW, 0.0, 1.0), 1.5);

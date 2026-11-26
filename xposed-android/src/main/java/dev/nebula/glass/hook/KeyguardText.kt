@@ -50,21 +50,35 @@ class KeyguardText : IXposedHookLoadPackage {
         installed = true
         HookSettings.load()
         GlassSettings.addListener { for (t in live.toList()) t.postInvalidate() }
+        dev.nebula.glass.LightSourceController.addRedraw { for (t in live.toList()) t.invalidate() }
         try {
             XposedHelpers.findAndHookMethod(TextView::class.java, "onDraw", Canvas::class.java, object : XC_MethodHook() {
                 override fun beforeHookedMethod(p: MethodHookParam) {
-                    val style = GlassSettings[Surface.LOCK_CLOCK]
                     val tv = p.thisObject as TextView
+                    val style = GlassSettings[Surface.LOCK_CLOCK, tv.context]
                     try {
                         val glassy = enabled && style.enabled && isTarget(tv)
+                        val filterTint = activeFilterTint(tv)
                         // The resized clock draws with or without glass, and in the editor too.
-                        if (LockClock.draw(tv, p.args[0] as Canvas, if (glassy) style else null, glass) { source(tv) }) {
+                        if (LockClock.draw(tv, p.args[0] as Canvas, if (glassy) style else null, glass, filterTint) { source(tv) }) {
                             p.result = null
                             return
                         }
                         if (!glassy) return
-                        if (glass.draw(tv, p.args[0] as Canvas, source(tv), style, neutral = true)) p.result = null
+                        if (glass.draw(tv, p.args[0] as Canvas, source(tv), style, neutral = true, filterTint = filterTint)) {
+                            p.result = null
+                            return
+                        }
+                        // While a resized text's SDF is baking mid-drag, draw crisp translucent white/tinted text so size updates at 120 fps.
+                        val fallbackColor = (if (style.tinted) style.color else (filterTint ?: android.graphics.Color.WHITE))
+                        val saved = XposedHelpers.getIntField(tv, "mCurTextColor")
+                        p.setObjectExtra("savedColor", saved)
+                        XposedHelpers.setIntField(tv, "mCurTextColor", (0xCC shl 24) or (fallbackColor and 0x00FFFFFF))
                     } catch (t: Throwable) { Log.e(TAG, "keyguard text", t) }
+                }
+                override fun afterHookedMethod(p: MethodHookParam) {
+                    val saved = p.getObjectExtra("savedColor") as? Int ?: return
+                    try { XposedHelpers.setIntField(p.thisObject, "mCurTextColor", saved) } catch (_: Throwable) {}
                 }
             })
             Log.i(TAG, "keyguard text hook installed")
@@ -130,6 +144,14 @@ class KeyguardText : IXposedHookLoadPackage {
         var c: Context? = c0
         while (c is ContextWrapper) { if (c is Activity) return c; c = c.baseContext }
         return null
+    }
+
+    private fun activeFilterTint(tv: TextView): Int? {
+        val act = activityOf(tv.context)
+        val layout = if (act != null && act.javaClass.name == LockEditor.ACTIVITY) {
+            LockEditor.currentDraft(act) ?: GlassSettings.config.lock
+        } else GlassSettings.config.lock
+        return dev.nebula.glass.WallpaperFilter.textTint(layout.filterMode, layout.filterColor)
     }
 
     private fun idName(v: View): String? = GlassTextHost.idName(v)

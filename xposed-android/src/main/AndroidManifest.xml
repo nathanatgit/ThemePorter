@@ -4,7 +4,7 @@
  <uses-permission android:name="com.nathanhanapps.nebulacolorize.permission.SETTINGS"/>
  <!-- Optional, user-granted: Android only lets apps with all-files access read the wallpaper image (ink picker). -->
  <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
- <application android:label="nebulaColorize" android:allowBackup="false">
+ <application android:label="nebulaColorize" android:icon="@mipmap/ic_launcher" android:allowBackup="false">
   <meta-data android:name="xposedmodule" android:value="true"/>
   <meta-data android:name="xposeddescription" android:value="ColorOS-style Liquid Glass for the Nubia launcher and lock screen"/>
   <meta-data android:name="xposedminversion" android:value="82"/>

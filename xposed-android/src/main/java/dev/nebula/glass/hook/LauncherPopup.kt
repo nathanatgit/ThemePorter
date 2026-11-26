@@ -62,8 +62,9 @@ class LauncherPopup : IXposedHookLoadPackage {
     private fun style(popup: ViewGroup) {
         val ctx = popup.context
         HookSettings.attach(ctx)
+        val night = (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         // Read per menu: the settings app can't be open over one.
-        val st = GlassSettings[Surface.POPUP]
+        val st = GlassSettings[Surface.POPUP, night]
         if (!st.enabled) return
         val back = composite ?: CompositeBackdrop(ctx.applicationContext, WallpaperBackdrop.shared(ctx)).also {
             composite = it
@@ -72,7 +73,6 @@ class LauncherPopup : IXposedHookLoadPackage {
         val root = popup.rootView
         if (root.width > 0) back.layoutTo(root.width, root.height)
         back.content = popup.parent as? View   // DragLayer: workspace, hotseat, popup
-        val night = (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         val panels = ArrayList<View>()
         find(popup, "deep_shortcuts_container")?.let { group ->
             panels.add(group)
@@ -85,6 +85,18 @@ class LauncherPopup : IXposedHookLoadPackage {
                 // shaped by Nubia's outline (native) or as a capsule (pill style).
                 panels.add(group)
                 for (i in 0 until group.childCount) clearFill(group.getChildAt(i))
+            } else if (group.findViewWithTag<View>(WidgetMenu.ROW) != null) {
+                // A widget's menu with our "Widget settings": one glass panel for both rows, in Nubia's row shape.
+                val first = group.getChildAt(0)
+                val r = corner(first.background) ?: outlineRadius(first) ?: (16 * popup.resources.displayMetrics.density)
+                merged[group] = r
+                for (i in 0 until group.childCount) group.getChildAt(i).background = ripple(ctx)
+                group.background = null
+                group.outlineProvider = object : android.view.ViewOutlineProvider() {
+                    override fun getOutline(v: View, o: android.graphics.Outline) = o.setRoundRect(0, 0, v.width, v.height, r)
+                }
+                group.clipToOutline = true
+                panels.add(group)
             } else {
                 for (i in 0 until group.childCount) panels.add(group.getChildAt(i))
                 group.background = null
@@ -97,6 +109,7 @@ class LauncherPopup : IXposedHookLoadPackage {
             val horizontalRow = panel is android.widget.LinearLayout &&
                 panel.orientation == android.widget.LinearLayout.HORIZONTAL
             val radius = when {
+                merged[panel] != null -> merged[panel]!!
                 horizontalRow && style == "pill" -> 999f
                 else -> corner(original) ?: outlineRadius(panel) ?: outlineRadius(popup) ?: (16 * dp)
             }
@@ -132,6 +145,14 @@ class LauncherPopup : IXposedHookLoadPackage {
             })
             Log.i(TAG, "popup arrow tinted ${c.javaClass.name} ${c.width}x${c.height}")
         }
+    }
+
+    private val merged = java.util.WeakHashMap<View, Float>()
+
+    /** The theme's press feedback, with no fill of its own. */
+    private fun ripple(ctx: Context): android.graphics.drawable.Drawable? {
+        val a = ctx.obtainStyledAttributes(intArrayOf(android.R.attr.selectableItemBackground))
+        try { return a.getDrawable(0) } finally { a.recycle() }
     }
 
     /** Rows inside a panel lose their opaque GradientDrawable fill; RippleDrawables are kept. */

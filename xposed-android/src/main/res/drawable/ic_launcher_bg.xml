@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Soft sky gradient behind the Fluent 3D rainbow (microsoft/fluentui-emoji, MIT). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <gradient android:angle="270" android:startColor="#FFF4F9FF" android:endColor="#FFD9E8FA"/>
+</shape>

@@ -121,8 +121,13 @@ class ClockFace private constructor(
             return rule
         }
 
-        /** How far boldness grows or thins a static font's strokes, as a share of the digit height. */
-        private const val MAX_OFFSET = 0.012f
+        /**
+         * How far boldness thins or thickens a static font's strokes, as a share of digit height.
+         * Capped at the user's preferred maximum (former slider 42 -> new 100) and reaching much
+         * thinner hairlines at 0.
+         */
+        private const val MAX_OFFSET = -0.002f
+        private const val MIN_OFFSET = -0.036f
 
         /**
          * Size and drawn height for a [maxWidth] x [height] box. Stretchable ([stretch]): the width
@@ -173,20 +178,28 @@ class ClockFace private constructor(
             val (size, shown) = fit(p.measureText(sample), figure, maxWidth, height, stretch = false)
             p.textSize = size
             val natural = size * figure
-            // A line font's boldness is its line width; growing its solid glyphs would close the seams.
-            val lineWidth = if (lineFont) natural * (0.012f + 0.03f * boldness.coerceIn(0, 100) / 100f) else 0f
-            val offset = if (lineFont) 0f else (boldness.coerceIn(0, 100) / 100f - 0.5f) * 2 * natural * MAX_OFFSET
+            val t = boldness.coerceIn(0, 100) / 100f
+            // A line font's boldness is its line width; 100 = former 42 (~0.0214), 0 = ultra-thin hairline.
+            val lineWidth = if (lineFont) natural * (0.0038f + 0.0176f * t) else 0f
+            val rawOffset = if (lineFont) 0f else natural * (MIN_OFFSET + (MAX_OFFSET - MIN_OFFSET) * t)
+            val minInk = maxOf(2.4f, natural * 0.0058f)
+            val baseStem = zeroStroke(p, false)
+            val offset = if (!lineFont && rawOffset < 0f && baseStem > 0f) maxOf(rawOffset, (minInk - baseStem) / 2f) else rawOffset
             val bar = (zeroStroke(p, true) + 2 * offset).coerceIn(1f, natural * 0.4f)
-            val stem = if (lineFont) lineWidth.coerceAtLeast(1f) else (zeroStroke(p, false) + 2 * offset).coerceAtLeast(1f)
+            val stem = if (lineFont) lineWidth.coerceAtLeast(1f) else (baseStem + 2 * offset).coerceAtLeast(1f)
             val stretch = kotlin.math.abs(natural - shown) >= 0.5f
             Log.i(TAG, "clock nubia font box ${maxWidth.toInt()}x${height.toInt()}: size=${size.toInt()} natural=${natural.toInt()} shown=${shown.toInt()}")
             return ClockFace(p, stem, shown, key, baseline = natural, axisBar = if (stretch) bar else 0f,
                 offset = offset, centreColon = false, fill = fillOf(p), lines = lineWidth).also { fontCache[key] = it }
         }
 
-        /** The heaviest weight a boldness of 100 reaches, and the lightest at 0: below 250, display digits turn to hairlines. */
-        private const val MAX_WEIGHT = 900f
-        private const val MIN_WEIGHT = 250f
+        /**
+         * Boldness 100 = former slider 42 (~436 weight, crisp regular-medium); boldness 0 combines
+         * Display optical size (opsz 144), minimum weight (100), minimum grade (GRAD -200), and
+         * gentle outline thinning to reach ultra-thin iOS 27 hairline digits.
+         */
+        private const val MAX_WEIGHT = 436f
+        private const val MIN_WEIGHT = 100f
 
         /** Roboto Flex at width 25 is hairline-narrow: above regular, narrow digits close up into blobs. */
         private fun narrowest(axis: ClockFonts.Axis, weight: Float?): Float {
@@ -241,11 +254,21 @@ class ClockFace private constructor(
             val wghtAxis = ax["wght"]
             val wdthAxis = ax["wdth"]
             val ytfiAxis = ax["YTFI"]
-            val opsz = ax["opsz"]?.let { minOf(it.max, 144f) }   // display sizes; Playfair's 1200 is hairline
+            val gradAxis = ax["GRAD"]
+            val boldT = boldness.coerceIn(0, 100) / 100f
+            // Display optical size (opsz = 144) has the thinnest, cleanest display strokes in Roboto Flex.
+            val opsz = ax["opsz"]?.let { minOf(it.max, 144f) }
+            // Below 45 % slider, map weight down to MIN_WEIGHT (100) and engage negative GRAD (-200..0)
+            // + sub-minimum outline thinning so 0 reaches a true ultra-thin iOS hairline!
+            val weightT = ((boldT - 0.28f) / 0.72f).coerceIn(0f, 1f)
             val weight = wghtAxis?.let {
                 val lo = maxOf(it.min, MIN_WEIGHT)
-                val hi = minOf(it.max, MAX_WEIGHT)
-                lo + (hi - lo) * boldness.coerceIn(0, 100) / 100f
+                val hi = maxOf(lo, minOf(it.max, MAX_WEIGHT))
+                lo + (hi - lo) * weightT
+            }
+            val grad = gradAxis?.let {
+                val gt = (boldT / 0.45f).coerceIn(0f, 1f)
+                (it.min + (0f - it.min) * gt).coerceIn(it.min, it.max)
             }
             var wdth = wdthAxis?.default
             var ytfi = ytfiAxis?.default
@@ -253,9 +276,10 @@ class ClockFace private constructor(
             // Tabular figures: the clock doesn't shift as the minutes change.
             val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = font.typeface; textSize = 1000f; fontFeatureSettings = "'tnum'" }
             fun apply() {
-                val s = ArrayList<String>(5)
+                val s = ArrayList<String>(6)
                 weight?.let { s.add("'wght' $it") }
                 opsz?.let { s.add("'opsz' $it") }
+                grad?.let { s.add("'GRAD' $it") }
                 wdth?.let { s.add("'wdth' $it") }
                 ytfi?.let { s.add("'YTFI' $it") }
                 p.fontVariationSettings = s.joinToString(", ")
@@ -311,12 +335,20 @@ class ClockFace private constructor(
             val (size, shown) = fit(p.measureText(sample), figure, maxWidth, height, stretch = wdthAxis != null || ytfiAxis != null)
             p.textSize = size
             val natural = size * figure
-            val bar = zeroStroke(p, true).coerceIn(1f, natural * 0.4f)
-            val stem = zeroStroke(p, false).coerceAtLeast(1f)
+            val baseBar = zeroStroke(p, true)
+            val baseStem = zeroStroke(p, false)
+            // In the bottom 32 % of the slider, gently erode outlines beyond wght=100 / GRAD=-200 down
+            // to a crisp hairline floor (~0.55 % of digit height, >= 2.4 px) so 0 is noticeably thinner!
+            val thinShare = ((0.32f - boldT) / 0.32f).coerceIn(0f, 1f)
+            val minInk = maxOf(2.4f, natural * 0.0055f)
+            val rawThin = -thinShare * natural * 0.0065f
+            val offset = if (rawThin < 0f && baseStem > 0f) maxOf(rawThin, (minInk - baseStem) / 2f) else 0f
+            val bar = (baseBar + 2f * offset).coerceIn(1f, natural * 0.4f)
+            val stem = (baseStem + 2f * offset).coerceAtLeast(1f)
             val rest = kotlin.math.abs(natural - shown) >= 0.5f
             Log.i(TAG, "clock ${font.family.id} box ${maxWidth.toInt()}x${height.toInt()}: ${p.fontVariationSettings} size=${size.toInt()} " +
-                "natural=${natural.toInt()} shown=${shown.toInt()} bar=${bar.toInt()} stem=${stem.toInt()} heightAxis=$rest in ${(System.nanoTime() - t0) / 1_000_000}ms")
-            return ClockFace(p, stem, shown, key, baseline = natural, axisBar = if (rest) bar else 0f, fill = fillOf(p))
+                "natural=${natural.toInt()} shown=${shown.toInt()} bar=${bar.toInt()} stem=${stem.toInt()} off=${"%.1f".format(offset)} heightAxis=$rest in ${(System.nanoTime() - t0) / 1_000_000}ms")
+            return ClockFace(p, stem, shown, key, baseline = natural, axisBar = if (rest) bar else 0f, offset = offset, fill = fillOf(p))
                 .also { cache[key] = it }
         }
     }

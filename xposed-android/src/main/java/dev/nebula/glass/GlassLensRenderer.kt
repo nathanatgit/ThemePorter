@@ -75,9 +75,14 @@ class GlassLensRenderer {
             uniform float2 lightDir;
             uniform float  specStrength;
             uniform float  rimBandMax;   // 贴边高光带宽度上限（px，小控件按短边收）
+            uniform float3 edgeColor;    // 边缘亮线颜色（默认纯白）
+            uniform float  edgeColored;  // > 0.5 表示用户自定义了边缘线颜色
+            uniform float3 glowColor;    // 边缘内侧辉光颜色（默认纯白）
+            uniform float  glowColored;  // > 0.5 表示用户自定义了边缘光晕颜色
             uniform float4 tintColor;
             uniform float  adaptiveTint;
             uniform float4 glassTint;
+            uniform float  frostCoat;    // 额外磨砂涂层强度（0..1，清透模式下与 GlassSkin 对齐）
             uniform float  dimAmount;
             uniform float  satFactor;
             uniform float  press;
@@ -244,32 +249,46 @@ class GlassLensRenderer {
                 // 层次与折射细节）+ 少量散射（暗背景下也看得出色相）。
                 // 位置在光照之前：染色属于透射，镜面高光属于表面反射，不该被染色
                 if (glassTint.a > 0.002) {
-                    float lumTint = dot(col, float3(0.2126, 0.7152, 0.0722));
-                    float3 absorbed = col * mix(float3(1.0), glassTint.rgb, 0.85);
-                    float3 scattered = glassTint.rgb * (0.38 * (1.0 - lumTint));
-                    col = mix(col, clamp(absorbed + scattered, float3(0.0), float3(1.0)), glassTint.a);
+                    if (frostCoat > 0.5) {
+                        // 清透模式磨砂涂层：与面板 GlassSkin 一致的直接混色，使文件夹/小组件/程序坞的“磨砂浓度”完全同步
+                        col = mix(col, glassTint.rgb, glassTint.a);
+                    } else {
+                        float lumTint = dot(col, float3(0.2126, 0.7152, 0.0722));
+                        float3 absorbed = col * mix(float3(1.0), glassTint.rgb, 0.85);
+                        float3 scattered = glassTint.rgb * (0.38 * (1.0 - lumTint));
+                        col = mix(col, clamp(absorbed + scattered, float3(0.0), float3(1.0)), glassTint.a);
+                    }
                 }
 
                 // 光照：同一法线场驱动。整圈亮边的明暗只由 dot(N, -L) 决定，没有与方向
                 // 无关的常亮项——侧向（法线垂直于光线处）归零，不会留下一圈固定描边。
-                // 两道对称的角度瓣（沿 iOS 26 控制中心截图里的控件一圈逐角量得）：迎光侧
-                // 与背光侧峰值相等（背光侧是透明介质的内壁反射），瓣宽 pow 4.5（离轴 30°
-                // 剩一半、45° 归零）；迎光侧另加一层向内的柔和辉光——iOS 左上角是亮线 +
-                // 辉光，右下角只有亮线，两侧的边缘内侧都没有暗带
                 float facing = dot(n, -lightDir);
-                float lobeF = pow(max(facing, 0.0), 4.5);
-                float lobeB = pow(max(-facing, 0.0), 4.5);
+                float lobeF = pow(max(facing, 0.0), 3.6);
+                float lobeB = pow(max(-facing, 0.0), 3.6);
+                float scaleSpec = specStrength * (1.0 - 0.35 * press);
 
-                // 贴边亮线（中心在边内 1px，半宽 2px）+ 迎光侧辉光：从亮线内侧（边内 3px）起
-                // 向内 1.5 次幂衰减，宽度与斜面弱相关、上限默认 6px、小控件按短边收。
-                // 辉光不叠在亮线上，两侧亮线峰值相等
-                float bandW = clamp(bevel * 0.3, 2.0, rimBandMax);
-                float glowIn = clamp((-d - 1.0) / 2.0, 0.0, 1.0);
-                float glow = glowIn * pow(clamp(1.0 - (-d - 3.0) / bandW, 0.0, 1.0), 1.5) * cov;
-                float hair = clamp(1.0 - abs(d + 1.0) / 2.0, 0.0, 1.0) * cov;
-                float spec = (hair * 0.70 * (lobeF + lobeB) + glow * 0.10 * lobeF)
-                             * specStrength * (1.0 - 0.35 * press);
-                col += float3(spec);
+                // 边缘内侧光晕：自定义颜色时加宽光晕带并采用 mix + 发光叠加，避免纯加法在浅色磨砂上被冲白看不见
+                float bandW = (glowColored > 0.5)
+                    ? clamp(max(bevel * 1.15, rimBandMax * 2.4), 6.0, rimBandMax * 2.8)
+                    : clamp(bevel * 0.35, 2.5, rimBandMax);
+                float glowIn = clamp((-d - 0.8) / 2.0, 0.0, 1.0);
+                float glow = glowIn * pow(clamp(1.0 - max(-d - 2.0, 0.0) / bandW, 0.0, 1.0), 1.35) * cov;
+                if (glowColored > 0.5) {
+                    float glowAmt = clamp(glow * (0.62 * lobeF + 0.30 * lobeB + 0.12) * scaleSpec, 0.0, 0.88);
+                    col = mix(col, glowColor, glowAmt) + glowColor * (glowAmt * 0.18);
+                } else {
+                    col += glowColor * (glow * (0.15 * lobeF + 0.05 * lobeB) * scaleSpec);
+                }
+
+                // 贴边亮线：自定义颜色时加宽到 ~3px 并直接着色边缘，任何明暗背景上都能清晰辨认色相
+                float hairWidth = (edgeColored > 0.5) ? 3.2 : 2.0;
+                float hair = clamp(1.0 - abs(d + 1.2) / hairWidth, 0.0, 1.0) * cov;
+                if (edgeColored > 0.5) {
+                    float edgeAmt = clamp(hair * (0.78 * (lobeF + lobeB) + 0.34) * scaleSpec, 0.0, 0.96);
+                    col = mix(col, edgeColor, edgeAmt) + edgeColor * (edgeAmt * 0.20);
+                } else {
+                    col += edgeColor * (hair * 0.70 * (lobeF + lobeB) * scaleSpec);
+                }
 
                 col = clamp(col, float3(0.0), float3(1.0));
                 return half4(half3(col * cov), half(cov));
@@ -301,9 +320,12 @@ class GlassLensRenderer {
         val dispersion: Float,
         val lightX: Float, val lightY: Float,
         val spec: Float,
+        val edgeColor: Int = Color.WHITE,
+        val glowColor: Int = Color.WHITE,
         val tint: Int,          // straight-alpha ARGB（adaptiveTint 时被忽略）
         val adaptiveTint: Boolean, // 逐像素自适应染色（Regular + enableAdaptiveTint）
         val glassTint: Int,     // 使用方指定的玻璃本体色（straight-alpha ARGB，a=0 关闭）
+        val frostCoat: Boolean = false,
         val dim: Float,
         val saturation: Float,  // 100 = 原始
         val press: Float,
@@ -526,6 +548,20 @@ class GlassLensRenderer {
         sh.setFloatUniform("specStrength", p.spec)
         sh.setFloatUniform("rimBandMax", p.rimBandMax)
         sh.setFloatUniform(
+            "edgeColor",
+            Color.red(p.edgeColor) / 255f,
+            Color.green(p.edgeColor) / 255f,
+            Color.blue(p.edgeColor) / 255f
+        )
+        sh.setFloatUniform("edgeColored", if ((p.edgeColor and 0x00FFFFFF) != 0x00FFFFFF) 1f else 0f)
+        sh.setFloatUniform(
+            "glowColor",
+            Color.red(p.glowColor) / 255f,
+            Color.green(p.glowColor) / 255f,
+            Color.blue(p.glowColor) / 255f
+        )
+        sh.setFloatUniform("glowColored", if ((p.glowColor and 0x00FFFFFF) != 0x00FFFFFF) 1f else 0f)
+        sh.setFloatUniform(
             "tintColor",
             Color.red(p.tint) / 255f,
             Color.green(p.tint) / 255f,
@@ -540,6 +576,7 @@ class GlassLensRenderer {
             Color.blue(p.glassTint) / 255f,
             Color.alpha(p.glassTint) / 255f
         )
+        sh.setFloatUniform("frostCoat", if (p.frostCoat) 1f else 0f)
         sh.setFloatUniform("dimAmount", p.dim)
         sh.setFloatUniform("satFactor", p.saturation / 100f)
         sh.setFloatUniform("press", p.press)

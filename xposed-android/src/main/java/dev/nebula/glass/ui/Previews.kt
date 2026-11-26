@@ -2,7 +2,6 @@ package dev.nebula.glass.ui
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -16,25 +15,23 @@ import android.graphics.RectF
 import android.graphics.RenderEffect
 import android.graphics.RenderNode
 import android.graphics.Shader
+import android.view.Gravity
 import android.view.View
 import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.TextView
 import dev.nebula.glass.GlassSkin
-import dev.nebula.glass.GlassText
 import dev.nebula.glass.GlassStyle
+import dev.nebula.glass.GlassText
 import dev.nebula.glass.Looks
+import dev.nebula.glass.Shapes
 import dev.nebula.glass.Surface
-
-// Live miniatures. They use the hooks' own Looks and drawing code, so a slider moves them as it moves the phone.
 
 private val APP_COLOURS = intArrayOf(
     0xFFFF3B5C.toInt(), 0xFF34C759.toInt(), 0xFFFFD60A.toInt(), 0xFF0A84FF.toInt(),
     0xFFF4F5F7.toInt(), 0xFFFF9F0A.toInt(), 0xFF1C1C1E.toInt(), 0xFFBF5AF2.toInt(),
 )
-
-private fun isNight(v: View) =
-    (v.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
 
 private fun roundOff(v: View, radiusDp: Float) {
     v.outlineProvider = object : ViewOutlineProvider() {
@@ -44,8 +41,7 @@ private fun roundOff(v: View, radiusDp: Float) {
     v.clipToOutline = true
 }
 
-/** A home screen: the wallpaper when readable, else a colourful stand-in, with icons that make blur visible. */
-private fun drawHomeScene(c: Canvas, w: Float, h: Float, wallpaper: Bitmap?, paint: Paint, columns: Int = 4, sparse: Boolean = false, icons: Boolean = true) {
+private fun drawHomeScene(c: Canvas, w: Float, h: Float, wallpaper: Bitmap?, paint: Paint, columns: Int = 4, sparse: Boolean = false, icons: Boolean = true, iconRowsLimit: Int = -1) {
     paint.color = Color.WHITE
     if (wallpaper != null && !wallpaper.isRecycled) {
         val s = maxOf(w / wallpaper.width, h / wallpaper.height)
@@ -60,26 +56,23 @@ private fun drawHomeScene(c: Canvas, w: Float, h: Float, wallpaper: Bitmap?, pai
     }
     if (!icons) return
     val cell = w / columns
-    val rows = (h / cell).toInt() + 1
+    val rows = if (iconRowsLimit > 0) iconRowsLimit else ((h / cell).toInt() + 1)
     for (i in 0 until rows * columns) {
         if (sparse && (i % columns + i / columns) % 2 == 1) continue
         val x = (i % columns + 0.22f) * cell
-        val y = (i / columns + 0.18f) * cell
+        val y = (i / columns + 0.16f) * cell
         paint.color = APP_COLOURS[(i * 3 + i / columns) % APP_COLOURS.size]
         c.drawRoundRect(x, y, x + cell * 0.56f, y + cell * 0.56f, cell * 0.14f, cell * 0.14f, paint)
     }
 }
 
-/**
- * The shared look on four surfaces at once, or the one being edited.
- * @param scope null = the shared look
- */
 @SuppressLint("ViewConstructor")
 internal class PreviewStage(
     context: Context,
     private val style: (Surface) -> GlassStyle,
+    private val shapes: () -> Shapes,
     private val wallpaper: () -> Bitmap?,
-    /** A tap on one surface of the shared preview: go to its settings. */
+    private val nightMode: () -> Boolean = { false },
     private val pick: (Surface) -> Unit = {},
 ) : LinearLayout(context) {
     private val parts = ArrayList<View>()
@@ -89,45 +82,90 @@ internal class PreviewStage(
     fun show(scope: Surface?) {
         removeAllViews()
         parts.clear()
-        fun panel(s: Surface): View = when (s) {
-            Surface.LOCK_WIDGET -> LockPreview(context, style, wallpaper)
-            Surface.FOLDER -> HomePreview(context, { style(Surface.FOLDER) }, wallpaper)
-            else -> PanelPreview(context, s, { style(s) }, wallpaper)
-        }.also { parts.add(it) }
+        fun panel(s: Surface, showBadge: Boolean = false): View {
+            val view: View = when (s) {
+                Surface.LOCK_WIDGET -> LockPreview(context, style, wallpaper, nightMode)
+                Surface.FOLDER -> HomePreview(context, { style(Surface.FOLDER) }, wallpaper, nightMode)
+                Surface.HOME_WIDGET -> WidgetPreview(context, { style(Surface.HOME_WIDGET) }, wallpaper, nightMode)
+                Surface.DOCK -> DockPreview(context, { style(Surface.DOCK) }, shapes, wallpaper, nightMode)
+                else -> PanelPreview(context, s, { style(s) }, wallpaper, nightMode)
+            }
+            parts.add(view)
+            if (!showBadge) return view
+            val wrap = FrameLayout(context)
+            roundOff(wrap, 20f)
+            wrap.addView(view, FrameLayout.LayoutParams(-1, -1))
+            val dp = resources.displayMetrics.density
+            val badge = TextView(context).apply {
+                text = badgeLabel(s)
+                textSize = 10.5f
+                setTextColor(Color.WHITE)
+                setShadowLayer(3f * dp, 0f, 1f * dp, 0x99000000.toInt())
+                setPadding((8 * dp).toInt(), (3 * dp).toInt(), (8 * dp).toInt(), (3 * dp).toInt())
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(0x4D000000)
+                    cornerRadius = 10 * dp
+                }
+            }
+            wrap.addView(badge, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply {
+                leftMargin = (6 * dp).toInt()
+                bottomMargin = (5 * dp).toInt()
+            })
+            return wrap
+        }
         if (scope != null) {
-            addView(panel(scope), LayoutParams(-1, -1))
+            addView(panel(scope, showBadge = false), LayoutParams(-1, -1))
             return
         }
-        val gap = (8 * resources.displayMetrics.density).toInt()
-        val grid = listOf(listOf(Surface.CONTROL_CENTER, Surface.NOTIFICATION), listOf(Surface.LOCK_WIDGET, Surface.FOLDER))
+        val gap = (7 * resources.displayMetrics.density).toInt()
+        val grid = listOf(
+            listOf(Surface.CONTROL_CENTER, Surface.NOTIFICATION),
+            listOf(Surface.LOCK_WIDGET, Surface.FOLDER),
+            listOf(Surface.HOME_WIDGET, Surface.DOCK),
+        )
         for ((r, surfaces) in grid.withIndex()) {
             val row = LinearLayout(context)
             for ((i, s) in surfaces.withIndex()) {
-                val v = panel(s)
+                val v = panel(s, showBadge = true)
                 v.contentDescription = "${s.title}: edit"
                 v.isClickable = true
                 v.setOnClickListener { pick(s) }
                 row.addView(v, LayoutParams(0, -1, 1f).apply { if (i == 0) marginEnd = gap })
             }
-            addView(row, LayoutParams(-1, 0, 1f).apply { if (r == 0) bottomMargin = gap })
+            addView(row, LayoutParams(-1, 0, 1f).apply { if (r < grid.lastIndex) bottomMargin = gap })
         }
+    }
+
+    private fun badgeLabel(s: Surface) = when (s) {
+        Surface.CONTROL_CENTER -> L("Control centre")
+        Surface.NOTIFICATION -> L("Notifications")
+        Surface.LOCK_WIDGET -> L("Lock screen")
+        Surface.FOLDER -> L("Folders")
+        Surface.HOME_WIDGET -> L("Home widgets")
+        Surface.DOCK -> L("Dock panel")
+        else -> s.title
     }
 
     fun refresh() {
         for (p in parts) when (p) {
             is HomePreview -> p.refresh()
+            is WidgetPreview -> p.refresh()
+            is DockPreview -> p.refresh()
             is LockPreview -> p.refresh()
             else -> p.invalidate()
         }
     }
 }
 
-/** The lock screen: glass clock and date, a widget, a shortcut and a notification card. */
 @SuppressLint("ViewConstructor")
-internal class LockPreview(context: Context, private val style: (Surface) -> GlassStyle, private val wallpaper: () -> Bitmap?) : FrameLayout(context) {
+internal class LockPreview(
+    context: Context,
+    private val style: (Surface) -> GlassStyle,
+    private val wallpaper: () -> Bitmap?,
+    private val nightMode: () -> Boolean,
+) : FrameLayout(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val scene = object : View(context) {
-        // No app icons on a lock screen.
         override fun onDraw(c: Canvas) {
             drawHomeScene(c, width.toFloat(), height.toFloat(), wallpaper(), paint, icons = false)
             val st = style(Surface.LOCK_WIDGET)
@@ -140,7 +178,7 @@ internal class LockPreview(context: Context, private val style: (Surface) -> Gla
     private val card = Card()
 
     init {
-        roundOff(this, 22f)
+        roundOff(this, 20f)
         for (v in listOf(scene, clock, card, widget, shortcut)) addView(v, LayoutParams(-1, -1))
     }
 
@@ -167,7 +205,7 @@ internal class LockPreview(context: Context, private val style: (Surface) -> Gla
         private val glass = GlassText().apply { onReady = { postInvalidate() } }
         private val type = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
-            typeface = android.graphics.Typeface.create("sans-serif-condensed", android.graphics.Typeface.BOLD)
+            typeface = android.graphics.Typeface.create("sans-serif-condensed", android.graphics.Typeface.NORMAL)
             textAlign = Paint.Align.LEFT
         }
 
@@ -179,8 +217,11 @@ internal class LockPreview(context: Context, private val style: (Surface) -> Gla
             val baseline = height * 0.80f
             var drawn = false
             if (st.enabled && glass.isAvailable) {
-                // Tuned as the phone's 300 px digits are, whatever the miniature's size.
-                glass.tint = st.body(glass.tuneFor(DEVICE_CLOCK_PX, Color.WHITE, 0.6f, st.glow))
+                glass.tint = st.body(glass.tuneFor(DEVICE_CLOCK_PX, Color.WHITE, 0.6f, st.glow, st.refraction, st.dispersion, st.vibrancy))
+                glass.edgeColor = st.edgeRgb
+                glass.glowColor = st.glowRgb
+                glass.lightX = st.lightX
+                glass.lightY = st.lightY
                 glass.blurRadius = st.blurPx(20f) * width / SCREEN_PX
                 glass.setText(text, type)
                 drawn = glass.draw(c, this, scene, x, baseline)
@@ -195,11 +236,14 @@ internal class LockPreview(context: Context, private val style: (Surface) -> Gla
 
         override fun onDraw(c: Canvas) {
             val st = style(surface)
+            val night = nightMode()
             val r = width / 2f
             if (st.enabled) {
-                Looks.style(lens, surface, resources.displayMetrics.density, r, st = st)
-                lens.blurRadiusOverride = st.blurPx(lens.defaultBlurPx) * 0.4f
-                lens.draw(c, this, scene, null)
+                if (surface != Surface.LOCK_WIDGET) {
+                    Looks.style(lens, surface, resources.displayMetrics.density, r, night = night, st = st)
+                    lens.blurRadiusOverride = st.blurPx(lens.defaultBlurPx) * 0.4f
+                    lens.draw(c, this, scene, null)
+                }
             } else if (surface == Surface.LOCK_WIDGET) {
                 ink.color = 0x40FFFFFF
                 c.drawCircle(r, r, r, ink)
@@ -212,39 +256,27 @@ internal class LockPreview(context: Context, private val style: (Surface) -> Gla
     }
 
     private inner class Card : View(context) {
+        private val lens = Looks.base(Surface.LOCK_CARD, context)
         private val skin = GlassSkin()
-        private val blurred = RenderNode("lock card blur")
-        private val path = Path()
         private val box = RectF()
         private val ink = Paint(Paint.ANTI_ALIAS_FLAG)
 
         override fun onDraw(c: Canvas) {
             if (!c.isHardwareAccelerated) return
             val st = style(Surface.LOCK_CARD)
-            val night = isNight(this)
+            val night = nightMode()
+            val dp = resources.displayMetrics.density
             val r = height * 0.3f
             box.set(0f, 0f, width.toFloat(), height.toFloat())
             if (st.enabled) {
-                val w = scene.width
-                val h = scene.height
-                blurred.setPosition(0, 0, w, h)
-                val px = st.blurPx(Looks.PANEL_CARD_BLUR_PX) * w / SCREEN_PX
-                val colour = RenderEffect.createColorFilterEffect(ColorMatrixColorFilter(ColorMatrix().apply {
-                    setSaturation(if (px >= 0.5f) Looks.PANEL_CARD_SATURATION else 1f)
-                }))
-                blurred.setRenderEffect(if (px >= 0.5f)
-                    RenderEffect.createChainEffect(colour, RenderEffect.createBlurEffect(px, px, Shader.TileMode.CLAMP)) else colour)
-                val rc = blurred.beginRecording()
-                try { drawHomeScene(rc, w.toFloat(), h.toFloat(), wallpaper(), paint, icons = false) } finally { blurred.endRecording() }
-                path.reset()
-                path.addRoundRect(box, r, r, Path.Direction.CW)
-                c.save()
-                c.clipPath(path)
-                c.translate(-left.toFloat(), -top.toFloat())
-                c.drawRenderNode(blurred)
-                c.restore()
-                skin.drawPanel(c, box, GlassSkin.uniform(r), Looks.lockCardBody(st, night),
-                    Looks.specular(Surface.LOCK_CARD) * st.glow, resources.displayMetrics.density * 0.6f)
+                Looks.style(lens, Surface.LOCK_CARD, dp * 0.6f, r, night = night, st = st)
+                lens.glassTint = Looks.lockCardBody(st, night)
+                lens.frostCoat = !st.tinted
+                lens.blurRadiusOverride = st.blurPx(14f * dp) * scene.width / SCREEN_PX
+                if (!lens.draw(c, this, scene, box)) {
+                    skin.drawPanel(c, box, GlassSkin.uniform(r), Looks.lockCardBody(st, night),
+                        Looks.specular(Surface.LOCK_CARD) * st.glow, dp * 0.6f, st)
+                }
             } else {
                 ink.color = if (night) 0xD91C1C1E.toInt() else 0xD9FFFFFF.toInt()
                 c.drawRoundRect(box, r, r, ink)
@@ -265,9 +297,14 @@ internal class LockPreview(context: Context, private val style: (Surface) -> Gla
     }
 }
 
-/** Two folder tiles through the launcher's refracting lens. */
+/** Folder tiles preview ([Surface.FOLDER]), respecting live `folderCorner` and Frost. */
 @SuppressLint("ViewConstructor")
-internal class HomePreview(context: Context, private val style: () -> GlassStyle, private val wallpaper: () -> Bitmap?) : FrameLayout(context) {
+internal class HomePreview(
+    context: Context,
+    private val style: () -> GlassStyle,
+    private val wallpaper: () -> Bitmap?,
+    private val nightMode: () -> Boolean,
+) : FrameLayout(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val scene = object : View(context) {
         override fun onDraw(c: Canvas) = drawHomeScene(c, width.toFloat(), height.toFloat(), wallpaper(), paint, columns = 6, sparse = true)
@@ -275,10 +312,10 @@ internal class HomePreview(context: Context, private val style: () -> GlassStyle
     private val tiles = listOf(Tile(), Tile())
 
     init {
-        roundOff(this, 22f)
+        roundOff(this, 20f)
         addView(scene, LayoutParams(-1, -1))
         val row = LinearLayout(context)
-        val pad = (10 * resources.displayMetrics.density).toInt()
+        val pad = (8 * resources.displayMetrics.density).toInt()
         row.setPadding(pad, pad, 0, pad)
         for (t in tiles) row.addView(t, LinearLayout.LayoutParams(0, -1, 1f).apply { marginEnd = pad })
         addView(row, LayoutParams(-1, -1))
@@ -296,18 +333,19 @@ internal class HomePreview(context: Context, private val style: () -> GlassStyle
         override fun onDraw(c: Canvas) {
             val dp = resources.displayMetrics.density
             val st = style()
-            val r = 16 * dp
+            val night = nightMode()
+            val defaultR = minOf(width, height) * 0.24f
+            val r = if (st.cornerDp >= 0) minOf(st.cornerDp * dp * 0.55f, minOf(width, height) / 2f) else defaultR
             if (st.enabled) {
-                Looks.style(lens, Surface.FOLDER, dp, r, st = st)
-                // The device samples a 40 px blur over a full screen; this scene is about a third of that size.
-                lens.blurRadiusOverride = st.blurPx(Looks.FOLDER_PREBLUR_PX * 0.4f)
+                Looks.style(lens, Surface.FOLDER, dp * 0.55f, defaultR, night = night, st = st)
+                lens.blurRadiusOverride = st.blurPx(Looks.FOLDER_PREBLUR_PX * 0.42f)
                 lens.draw(c, this, scene, null)
             } else {
-                icon.color = if (isNight(this)) 0xB0303034.toInt() else 0xB0EDEDF0.toInt()
+                icon.color = if (night) 0xB0303034.toInt() else 0xB0EDEDF0.toInt()
                 c.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), r, r, icon)
             }
-            val size = minOf(width, height) * 0.3f
-            val gap = size * 0.25f
+            val size = minOf(width, height) * 0.28f
+            val gap = size * 0.24f
             for (i in 0 until 4) {
                 val x = width / 2f + (if (i % 2 == 0) -size - gap / 2 else gap / 2)
                 val y = height / 2f + (if (i < 2) -size - gap / 2 else gap / 2)
@@ -318,17 +356,165 @@ internal class HomePreview(context: Context, private val style: () -> GlassStyle
     }
 }
 
-/**
- * The control centre, notification shade or widget board, composited in the device's order: dimmed
- * backdrop, window blur, saturated card blur, then the hooks' skin. Geometry is in NX733J px,
- * fitted into the view.
- */
+/** Home screen app widget preview ([Surface.HOME_WIDGET]): refractive widget card + inner glass pills. */
+@SuppressLint("ViewConstructor")
+internal class WidgetPreview(
+    context: Context,
+    private val style: () -> GlassStyle,
+    private val wallpaper: () -> Bitmap?,
+    private val nightMode: () -> Boolean,
+) : FrameLayout(context) {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val scene = object : View(context) {
+        override fun onDraw(c: Canvas) = drawHomeScene(c, width.toFloat(), height.toFloat(), wallpaper(), paint, columns = 5, sparse = true)
+    }
+    private val card = Card()
+
+    init {
+        roundOff(this, 20f)
+        addView(scene, LayoutParams(-1, -1))
+        val padH = (10 * resources.displayMetrics.density).toInt()
+        val padV = (8 * resources.displayMetrics.density).toInt()
+        addView(card, LayoutParams(-1, -1).apply { setMargins(padH, padV, padH, padV) })
+    }
+
+    fun refresh() {
+        scene.invalidate()
+        card.invalidate()
+    }
+
+    private inner class Card : View(context) {
+        private val lens = Looks.base(Surface.HOME_WIDGET, context)
+        private val skin = GlassSkin()
+        private val ink = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val sub = RectF()
+
+        override fun onDraw(c: Canvas) {
+            val dp = resources.displayMetrics.density
+            val st = style()
+            val night = nightMode()
+            val w = width.toFloat()
+            val h = height.toFloat()
+            if (w <= 0f || h <= 0f) return
+            val r = minOf(w, h) * 0.24f
+            if (st.enabled) {
+                Looks.style(lens, Surface.HOME_WIDGET, dp * 0.55f, r, night = night, st = st)
+                lens.blurRadiusOverride = st.blurPx(Looks.FOLDER_PREBLUR_PX * 0.42f)
+                lens.draw(c, this, scene, null)
+            } else {
+                ink.color = if (night) 0xD91C1C1E.toInt() else 0xD9F4F5F7.toInt()
+                c.drawRoundRect(0f, 0f, w, h, r, r, ink)
+            }
+            val fg = if (Looks.dark(night)) Color.WHITE else 0xFF1A1B20.toInt()
+            ink.color = fg
+            ink.isFakeBoldText = true
+            ink.textSize = h * 0.30f
+            c.drawText("23°", w * 0.08f, h * 0.40f, ink)
+            ink.isFakeBoldText = false
+            ink.textSize = h * 0.16f
+            c.drawText("Sunny · Thu", w * 0.08f, h * 0.60f, ink)
+
+            // Inner widget row cells (matching LauncherWidgets.drawInner)
+            val innerBase = if (Looks.dark(night)) 0x38FFFFFF else 0x73FFFFFF
+            val innerTint = Looks.body(Surface.HOME_WIDGET, st, night, innerBase, 0x6B)
+            for (i in 0..1) {
+                val top = h * (0.15f + i * 0.39f)
+                sub.set(w * 0.48f, top, w * 0.93f, top + h * 0.31f)
+                val sr = sub.height() * 0.34f
+                if (st.enabled) {
+                    skin.draw(c, sub, GlassSkin.uniform(sr), innerTint, 0.6f * st.glow, dp * 0.55f, st)
+                } else {
+                    ink.color = if (night) 0xFF2C2C30.toInt() else Color.WHITE
+                    c.drawRoundRect(sub, sr, sr, ink)
+                }
+                ink.color = fg
+                ink.isFakeBoldText = true
+                ink.textSize = sub.height() * 0.46f
+                c.drawText(if (i == 0) "14:00 Review" else "6,859 Steps",
+                    sub.left + sub.height() * 0.32f, sub.centerY() - (ink.ascent() + ink.descent()) / 2f, ink)
+            }
+        }
+    }
+}
+
+/** Home screen dock preview ([Surface.DOCK]), reflecting live `dockWidth`, `dockPad`, `dockCorner`, and optics. */
+@SuppressLint("ViewConstructor")
+internal class DockPreview(
+    context: Context,
+    private val style: () -> GlassStyle,
+    private val shapes: () -> Shapes,
+    private val wallpaper: () -> Bitmap?,
+    private val nightMode: () -> Boolean,
+) : FrameLayout(context) {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val scene = object : View(context) {
+        override fun onDraw(c: Canvas) = drawHomeScene(c, width.toFloat(), height.toFloat(), wallpaper(), paint, columns = 4, sparse = false, iconRowsLimit = 1)
+    }
+    private val bar = Bar()
+
+    init {
+        roundOff(this, 20f)
+        addView(scene, LayoutParams(-1, -1))
+        addView(bar, LayoutParams(-1, -1))
+    }
+
+    fun refresh() {
+        scene.invalidate()
+        bar.invalidate()
+    }
+
+    private inner class Bar : View(context) {
+        private val lens = Looks.base(Surface.DOCK, context)
+        private val box = RectF()
+        private val icon = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        override fun onDraw(c: Canvas) {
+            val w = width.toFloat()
+            val h = height.toFloat()
+            if (w <= 0f || h <= 0f) return
+            val dp = resources.displayMetrics.density
+            val st = style()
+            val sh = shapes()
+            val night = nightMode()
+
+            val iconSide = minOf(h * 0.30f, w * 0.13f)
+            val cy = h * 0.70f
+            val padPx = (sh.dockPad / 12f) * (iconSide * 0.32f)
+            val fullW = w * 0.88f
+            val dockW = fullW * (sh.dockWidth / 100f)
+            val top = (cy - iconSide / 2f - padPx).coerceAtLeast(h * 0.32f)
+            val bot = (cy + iconSide / 2f + padPx).coerceAtMost(h * 0.95f)
+            box.set((w - dockW) / 2f, top, (w + dockW) / 2f, bot)
+
+            val origR = minOf(box.height() / 2f, 30f * dp * 0.45f)
+            Looks.style(lens, Surface.DOCK, dp * 0.45f, origR, night = night, st = st)
+            if (st.cornerDp >= 0) {
+                lens.cornerRadius = minOf(st.cornerDp * dp * 0.45f, minOf(box.width(), box.height()) / 2f)
+            }
+            lens.blurRadiusOverride = st.blurPx(Looks.FOLDER_PREBLUR_PX * 0.42f)
+            // Always preview the glass dock bar in DockPreview so tweaking its sliders gives instant feedback.
+            lens.draw(c, this, scene, box)
+
+            val count = 4
+            val innerSpan = dockW * 0.80f
+            val step = innerSpan / count
+            val startX = (w - innerSpan) / 2f + (step - iconSide) / 2f
+            for (i in 0 until count) {
+                val x = startX + i * step
+                icon.color = APP_COLOURS[i]
+                c.drawRoundRect(x, cy - iconSide / 2f, x + iconSide, cy + iconSide / 2f, iconSide * 0.26f, iconSide * 0.26f, icon)
+            }
+        }
+    }
+}
+
 @SuppressLint("ViewConstructor")
 internal class PanelPreview(
     context: Context,
     private val surface: Surface,
     private val style: () -> GlassStyle,
     private val wallpaper: () -> Bitmap?,
+    private val nightMode: () -> Boolean,
 ) : View(context) {
     private val skin = GlassSkin()
     private val window = RenderNode("preview window blur")
@@ -345,7 +531,7 @@ internal class PanelPreview(
     private var ox = 0f
     private var oy = 0f
 
-    init { roundOff(this, 22f) }
+    init { roundOff(this, 20f) }
 
     override fun onDraw(c: Canvas) {
         if (width == 0 || height == 0 || !c.isHardwareAccelerated) return
@@ -353,10 +539,11 @@ internal class PanelPreview(
         ox = (width - design.width() * k) / 2 - design.left * k
         oy = (height - design.height() * k) / 2 - design.top * k
         val st = style()
+        val night = nightMode()
         val board = surface == Surface.WIDGET_BOARD
         val amount = if (st.enabled) st.blur / 100f else 1f
         val windowPx = when {
-            board -> if (st.enabled) BOARD_BLUR_PX * amount else BOARD_BLUR_PX   // the launcher's, scaled
+            board -> if (st.enabled) BOARD_BLUR_PX * amount else BOARD_BLUR_PX
             st.enabled -> Looks.NUBIA_BLUR_PX * Looks.PANEL_BLUR_SCALE * amount
             else -> Looks.NUBIA_BLUR_PX
         }
@@ -368,8 +555,8 @@ internal class PanelPreview(
         record(window, windowPx * k, 1f, dim)
         c.drawRenderNode(window)
         if (!board) {
-            record(card, Looks.PANEL_CARD_BLUR_PX * amount * k, if (amount > 0f) Looks.PANEL_CARD_SATURATION else 1f, dim)
-            if (!st.enabled) c.drawColor(if (isNight(this)) 0xB0101012.toInt() else 0x8AD8D8DC.toInt())
+            record(card, Looks.PANEL_CARD_BLUR_PX * amount * k, if (amount > 0f) Looks.panelSaturation(st) else 1f, dim)
+            if (!st.enabled) c.drawColor(if (night) 0xB0101012.toInt() else 0x8AD8D8DC.toInt())
         }
         c.save()
         c.translate(ox, oy)
@@ -454,15 +641,14 @@ internal class PanelPreview(
         text(c, st, "Cloudy", 676f, 490f, 52f)
     }
 
-    /** Design px radius: the user's tile corner in the control centre (a pill at most), else [default]. */
     private fun tileRadius(st: GlassStyle, box: RectF, default: Float): Float =
-        if (surface != Surface.CONTROL_CENTER || st.cornerDp < 0) default
+        if ((surface != Surface.CONTROL_CENTER && surface != Surface.NOTIFICATION) || st.cornerDp < 0) default
         else GlassSkin.tileCorner(st.cornerDp * SCREEN_DENSITY, box.width(), box.height())
 
     private fun glass(c: Canvas, st: GlassStyle, box: RectF, design: Float, on: Boolean = false) {
         val radius = tileRadius(st, box, design)
         val r = RectF(box.left * k, box.top * k, box.right * k, box.bottom * k)
-        val night = isNight(this)
+        val night = nightMode()
         if (!st.enabled) {
             fill.color = when {
                 on -> NUBIA_BLUE
@@ -476,7 +662,7 @@ internal class PanelPreview(
         val strength = Looks.specular(surface) * st.glow
         val density = SCREEN_DENSITY * k
         if (surface == Surface.WIDGET_BOARD) {
-            skin.draw(c, r, radii, Looks.body(surface, st, night), strength, density)
+            skin.draw(c, r, radii, Looks.body(surface, st, night), strength, density, st)
             return
         }
         path.reset()
@@ -486,11 +672,11 @@ internal class PanelPreview(
         c.translate(-ox, -oy)
         c.drawRenderNode(card)
         c.restore()
-        skin.drawPanel(c, r, radii, Looks.panelBody(surface, st, night, if (on) NUBIA_BLUE else null), strength, density)
+        skin.drawPanel(c, r, radii, Looks.panelBody(surface, st, night, if (on) NUBIA_BLUE else null), strength, density, st)
     }
 
     private fun ink(st: GlassStyle, on: Boolean): Int {
-        val whiteText = on || isNight(this) || (st.enabled && surface != Surface.WIDGET_BOARD)
+        val whiteText = on || nightMode() || (st.enabled && surface != Surface.WIDGET_BOARD)
         return if (whiteText) Color.WHITE else 0xFF202024.toInt()
     }
 

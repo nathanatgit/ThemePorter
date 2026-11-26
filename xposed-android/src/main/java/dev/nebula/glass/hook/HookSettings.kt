@@ -44,6 +44,14 @@ object HookSettings {
                     Log.i(TAG, "settings updated")
                 }
             }, IntentFilter(GlassSettings.ACTION), GlassSettings.PERMISSION, null, Context.RECEIVER_EXPORTED)
+            ctx.applicationContext.registerReceiver(object : BroadcastReceiver() {
+                override fun onReceive(c: Context, i: Intent) {
+                    GlassSettings.notifyListeners()
+                }
+            }, IntentFilter(Intent.ACTION_CONFIGURATION_CHANGED), Context.RECEIVER_NOT_EXPORTED)
+            // "Follow device tilt": the sensor runs only while some look wants it and the screen is on.
+            dev.nebula.glass.LightSourceController.start(ctx) { GlassSettings.config.anySensor() }
+            GlassSettings.addListener { dev.nebula.glass.LightSourceController.update() }
         } catch (t: Throwable) {
             attached = false
             Log.e(TAG, "settings receiver failed", t)

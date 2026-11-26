@@ -57,7 +57,7 @@ class BoardBackdrop : IXposedHookLoadPackage {
                 SurfaceControl::class.java, Int::class.javaPrimitiveType, object : XC_MethodHook() {
                     override fun beforeHookedMethod(p: MethodHookParam) {
                         if (progress <= 0f) return
-                        val st = GlassSettings[Surface.WIDGET_BOARD]
+                        val st = GlassSettings[Surface.WIDGET_BOARD, workspace?.get()?.context]
                         if (!st.enabled || st.blur == 100) return
                         if (p.args[0] !== baseSurface()) return
                         p.args[1] = ((p.args[1] as Int) * st.blur / 100f).toInt()
@@ -89,7 +89,7 @@ class BoardBackdrop : IXposedHookLoadPackage {
 
     private fun applyDim() {
         val sc = baseSurface()?.takeIf { it.isValid } ?: return
-        val st = GlassSettings[Surface.WIDGET_BOARD]
+        val st = GlassSettings[Surface.WIDGET_BOARD, workspace?.get()?.context]
         val a = if (st.enabled) Looks.backdropDim(Surface.WIDGET_BOARD, st) * progress else 0f
         val t = SurfaceControl.Transaction()
         try {

@@ -7,10 +7,12 @@ import android.net.Uri
 import android.os.Binder
 import android.os.Bundle
 import dev.nebula.glass.LockLayout
+import dev.nebula.glass.WidgetTweak
 
 /**
- * Where SystemUI's lock-screen editor saves the clock, date and custom text boxes, so the module's prefs
- * stay the one store. Exported for that caller only: anyone but SystemUI gets a SecurityException.
+ * Where SystemUI's lock-screen editor saves the clock, date and custom text boxes, and the launcher saves
+ * per-widget settings, so the module's prefs stay the one store. Each call is accepted from its own
+ * caller only; anyone else gets a SecurityException.
  */
 class LayoutProvider : ContentProvider() {
     override fun onCreate() = true
@@ -18,12 +20,23 @@ class LayoutProvider : ContentProvider() {
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle? {
         val ctx = context ?: return null
         val callers = ctx.packageManager.getPackagesForUid(Binder.getCallingUid()).orEmpty()
-        if (SYSTEMUI !in callers) throw SecurityException("only System UI may change the lock layout")
-        if (method != LockLayout.CALL_SAVE_LAYOUT || extras == null) return null
-        val json = extras.getString(LockLayout.KEY_LAYOUT) ?: return null
+        extras ?: return null
+        val save: SettingsStore.() -> Unit = when (method) {
+            LockLayout.CALL_SAVE_LAYOUT -> {
+                if (SYSTEMUI !in callers) throw SecurityException("only System UI may change the lock layout")
+                val json = extras.getString(LockLayout.KEY_LAYOUT) ?: return null
+                ({ saveEditorNow(LockLayout.fromJson(org.json.JSONObject(json))) })
+            }
+            WidgetTweak.CALL_SAVE -> {
+                if (LAUNCHER !in callers) throw SecurityException("only the launcher may change widget settings")
+                val json = extras.getString(WidgetTweak.KEY) ?: return null
+                ({ saveWidgetsNow(WidgetTweak.mapFromJson(org.json.JSONObject(json))) })
+            }
+            else -> return null
+        }
         val token = Binder.clearCallingIdentity()
         try {
-            SettingsStore(ctx).saveEditorNow(LockLayout.fromJson(org.json.JSONObject(json)))
+            SettingsStore(ctx).save()
         } finally {
             Binder.restoreCallingIdentity(token)
         }
@@ -36,5 +49,5 @@ class LayoutProvider : ContentProvider() {
     override fun delete(uri: Uri, s: String?, a: Array<out String>?) = 0
     override fun update(uri: Uri, v: ContentValues?, s: String?, a: Array<out String>?) = 0
 
-    private companion object { const val SYSTEMUI = "com.android.systemui" }
+    private companion object { const val SYSTEMUI = "com.android.systemui"; const val LAUNCHER = "com.zte.mifavor.launcher" }
 }

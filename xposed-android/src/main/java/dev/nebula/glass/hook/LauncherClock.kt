@@ -48,12 +48,13 @@ class LauncherClock : IXposedHookLoadPackage {
         if (app.packageName != LAUNCHER || app.processName != LAUNCHER) return
         HookSettings.load()
         GlassSettings.addListener { for (t in live.keys.toList()) t.postInvalidate() }
+        dev.nebula.glass.LightSourceController.addRedraw { for (t in live.keys.toList()) t.invalidate() }
         try {
             XposedHelpers.findAndHookMethod(TextView::class.java, "onDraw", Canvas::class.java, object : XC_MethodHook() {
                 override fun beforeHookedMethod(p: MethodHookParam) {
-                    val style = GlassSettings[Surface.HOME_CLOCK]
-                    if (!enabled || !style.enabled) return
                     val tv = p.thisObject as TextView
+                    val style = GlassSettings[Surface.HOME_CLOCK, tv.context]
+                    if (!enabled || !style.enabled) return
                     try {
                         if (!isTarget(tv)) return
                         val canvas = p.args[0] as Canvas

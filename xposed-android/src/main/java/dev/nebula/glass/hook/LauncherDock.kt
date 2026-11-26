@@ -49,6 +49,7 @@ class LauncherDock : IXposedHookLoadPackage {
         if (app.packageName != LAUNCHER || app.processName != LAUNCHER) return
         HookSettings.load()
         GlassSettings.addListener { guard { apply() } }
+        dev.nebula.glass.LightSourceController.addRedraw { drawable?.invalidateSelf() }
         val hotseat = XposedHelpers.findClassIfExists("com.android.launcher3.Hotseat", app.classLoader) ?: run {
             Log.w(TAG, "Hotseat not found"); return
         }
@@ -167,9 +168,10 @@ class LauncherDock : IXposedHookLoadPackage {
                 // Unified look: style, blur and glow from the settings app. Like folders and
                 // widgets, 100 % blur samples the shared pre-blurred wallpaper (no GPU blur).
                 val dp = host.resources.displayMetrics.density
-                val st = GlassSettings[Surface.DOCK]
+                val night = GlassSettings.isNight(host.context)
+                val st = GlassSettings[Surface.DOCK, night]
                 val pre = st.blur == 100
-                Looks.style(glass, Surface.DOCK, dp, minOf(30 * dp, shape.height() / 2f), preBlurred = pre, st = st)
+                Looks.style(glass, Surface.DOCK, dp, minOf(30 * dp, shape.height() / 2f), night = night, preBlurred = pre, st = st)
                 val source = if (pre) WallpaperBackdrop.sharedBlurred(host.context) else WallpaperBackdrop.shared(host.context)
                 val root = host.rootView
                 if (root.width > 0) source.layoutTo(root.width, root.height)

@@ -44,9 +44,12 @@ import android.view.ViewGroup
 
 class BackdropCapture {
 
-    private companion object {
+    companion object {
         /** 进行中的采样层数（只在主线程改）。> 0 说明当前绘制发生在某块玻璃的采样里 */
         var depth = 0
+            private set
+
+        val isActive: Boolean get() = depth > 0
     }
 
     // 复用，避免每帧分配
@@ -67,11 +70,11 @@ class BackdropCapture {
     }
 
     private fun drawLevel(canvas: Canvas, host: View, glass: View) {
-        // 这一层要跳过的直接子级：玻璃本身，或玻璃所在的那条分支。
-        // host 不是玻璃的祖先（同级/跨层级/跨 window 的背景来源）时为 null，
-        // 这种情况没有重入风险，整棵照常画。
         val branch = childOnPathTo(host, glass)
-        drawContent(canvas, host, branch ?: glass)
+        // When host is an unattached/external backdrop (branch == null && host !== glass), glass is
+        // not inside host's subtree at all — never mutate glass's visibility flags mid-draw!
+        val toHide = if (host === glass) glass else branch
+        drawContent(canvas, host, toHide)
         if (branch == null || branch === glass) return
 
         // 分支刚才被跳过了，这里单独补画（坐标取屏幕差，自带滚动/平移）
@@ -89,14 +92,10 @@ class BackdropCapture {
         canvas.restoreToCount(save)
     }
 
-    /** 画 [host] 自身，期间把 [hidden] 置为 INVISIBLE 让 dispatchDraw 跳过它 */
-    private fun drawContent(canvas: Canvas, host: View, hidden: View) {
+    private fun drawContent(canvas: Canvas, host: View, hidden: View?) {
         val save = canvas.save()
-        // 公开的 View.draw(Canvas) 不带滚动偏移（框架是在 updateDisplayListIfDirty
-        // 里补的），这里补上，否则滚动容器作为背景来源时内容会整体错位
         canvas.translate(-host.scrollX.toFloat(), -host.scrollY.toFloat())
-        // setTransitionVisibility 只改可见性标志、不触发 invalidate
-        hidden.setTransitionVisibility(View.INVISIBLE)
+        hidden?.setTransitionVisibility(View.INVISIBLE)
         val nested = depth > 0
         if (nested) hideOtherGlass(host, hidden)
         depth++
@@ -108,13 +107,12 @@ class BackdropCapture {
                 for (v in nestedHidden) v.setTransitionVisibility(View.VISIBLE)
                 nestedHidden.clear()
             }
-            hidden.setTransitionVisibility(View.VISIBLE)
+            hidden?.setTransitionVisibility(View.VISIBLE)
             canvas.restoreToCount(save)
         }
     }
 
-    /** 把 [host] 的直接子级里（除 [except] 外）的玻璃临时藏起来；不往容器里钻，原因见类注释 */
-    private fun hideOtherGlass(host: View, except: View) {
+    private fun hideOtherGlass(host: View, except: View?) {
         if (host !is ViewGroup) return
         for (i in 0 until host.childCount) {
             val child = host.getChildAt(i)

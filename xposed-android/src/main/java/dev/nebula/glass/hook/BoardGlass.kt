@@ -51,6 +51,7 @@ class BoardGlass : IXposedHookLoadPackage {
         if (app.packageName != BOARD || app.processName != BOARD) return
         HookSettings.load()
         GlassSettings.addListener { for (t in tracked.values.toList()) t.host.get()?.invalidate() }
+        dev.nebula.glass.LightSourceController.addRedraw { for (t in tracked.values.toList()) t.host.get()?.invalidate() }
         val base = XposedHelpers.findClassIfExists("com.zte.mifavor.miboard.contents.views.g", app.classLoader)
         if (base == null) { Log.w(TAG, "board card base not found"); return }
         val cardField = XposedHelpers.findFieldIfExists(base, "A")
@@ -159,7 +160,8 @@ class BoardGlass : IXposedHookLoadPackage {
 
     private fun drawSkin(d: Drawable, c: Canvas, t: Target): Boolean {
         val host = t.host.get() ?: return false
-        val st = GlassSettings[Surface.WIDGET_BOARD]
+        val night = (host.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        val st = GlassSettings[Surface.WIDGET_BOARD, night]
         if (!st.enabled) return false
         val g = d as? GradientDrawable
         val color = when (d) { is ColorDrawable -> d.color; else -> g?.color?.defaultColor ?: g?.colors?.firstOrNull() }
@@ -177,10 +179,9 @@ class BoardGlass : IXposedHookLoadPackage {
             g.shape == GradientDrawable.OVAL -> GlassSkin.uniform(minOf(rect.width(), rect.height()) / 2f)
             else -> g.cornerRadii?.takeIf { it.size == 8 } ?: GlassSkin.uniform(g.cornerRadius)
         }
-        val night = (host.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         var tint = Looks.body(Surface.WIDGET_BOARD, st, night)
         if (t.inner) tint = (tint and 0xFFFFFF) or (((tint ushr 24) * 6 / 10) shl 24)
-        skin.draw(c, rect, radii, tint, Looks.specular(Surface.WIDGET_BOARD) * st.glow * (if (t.inner) 0.6f else 1f), dp)
+        skin.draw(c, rect, radii, tint, Looks.specular(Surface.WIDGET_BOARD) * st.glow * (if (t.inner) 0.6f else 1f), dp, st)
         // A picture card keeps its artwork faintly on the glass.
         (d as? android.graphics.drawable.BitmapDrawable)?.bitmap?.takeIf { !it.isRecycled }?.let { bmp ->
             artPaint.alpha = 0x38

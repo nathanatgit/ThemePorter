@@ -13,11 +13,13 @@ import dev.nebula.glass.GlobalStyle
 import dev.nebula.glass.LockLayout
 import dev.nebula.glass.Shapes
 import dev.nebula.glass.Surface
+import dev.nebula.glass.ThemePreset
+
+import org.json.JSONObject
 
 /**
- * Settings-app side of [GlassSettings]: keeps the editable map, persists it where Vector can serve it
- * to the hooks (world-readable prefs, enabled by the `xposedsharedprefs` manifest flag) and pushes
- * every change live to SystemUI and the launcher.
+ * Settings-app side of [GlassSettings]: keeps the editable map (with separate Light and Dark theme
+ * presets), persists it where Vector can serve it to the hooks and pushes every change live.
  */
 class SettingsStore(private val ctx: Context) {
     /** False when the prefs could not be made world-readable (module not active in Vector). */
@@ -35,22 +37,33 @@ class SettingsStore(private val ctx: Context) {
 
     fun setOn(surfaces: List<Surface>, on: Boolean) = commit(config.copy(on = config.on + surfaces.associateWith { on }))
 
-    fun resetGlobal() = commit(config.copy(global = GlobalStyle(), own = emptyMap(), follow = emptySet()))
+    fun resetGlobal(night: Boolean) = commit(config.withPreset(night, ThemePreset(GlobalStyle())))
 
-    /** The look being edited: [scope]'s own (or, until it has one, the shared look); null = the shared look. */
-    fun look(scope: Surface?) = if (scope == null) config.global else config.look(scope)
+    /** Copy one theme preset's parameters into the other (e.g. start Dark from Light). */
+    fun copyPreset(fromNight: Boolean, toNight: Boolean) =
+        commit(config.withPreset(toNight, config.preset(fromNight)))
 
-    /** Panel [s] uses the shared look ("Follow all surfaces"). */
-    fun follows(s: Surface) = config.follows(s)
+    /** The look being edited in [night] mode: [scope]'s own, or [scope] == null for All surfaces. */
+    fun look(scope: Surface?, night: Boolean) = if (scope == null) config.preset(night).global else config.look(scope, night)
 
-    /** Edit a look: the shared one, or a panel's own (it stops following). */
-    fun setLook(scope: Surface?, g: GlobalStyle) =
-        commit(if (scope == null) config.copy(global = g) else config.copy(own = config.own + (scope to g), follow = config.follow - scope))
+    /** Panel [s] uses the shared look ("Follow all surfaces") in [night] mode. */
+    fun follows(s: Surface, night: Boolean) = config.follows(s, night)
 
-    /** Follow the shared look, or stop: a panel without a look of its own starts from the shared one. */
-    fun setFollow(s: Surface, follow: Boolean) = commit(
-        if (follow) config.copy(follow = config.follow + s)
-        else config.copy(own = config.own + (s to (config.own[s] ?: config.global)), follow = config.follow - s))
+    /** Edit a look in [night] mode: the shared one, or a panel's own (it stops following). */
+    fun setLook(scope: Surface?, night: Boolean, g: GlobalStyle) {
+        val p = config.preset(night)
+        val next = if (scope == null) p.copy(global = g)
+        else p.copy(own = p.own + (scope to g), follow = p.follow - scope)
+        commit(config.withPreset(night, next))
+    }
+
+    /** Follow the shared look, or stop, in [night] mode. */
+    fun setFollow(s: Surface, night: Boolean, follow: Boolean) {
+        val p = config.preset(night)
+        val next = if (follow) p.copy(follow = p.follow + s)
+        else p.copy(own = p.own + (s to (p.own[s] ?: p.global)), follow = p.follow - s)
+        commit(config.withPreset(night, next))
+    }
 
     val shapes get() = config.shapes
 
@@ -66,9 +79,44 @@ class SettingsStore(private val ctx: Context) {
         persistAndBroadcast()
     }
 
+    /** From the launcher's widget menu ([LayoutProvider]). */
+    fun saveWidgetsNow(widgets: Map<Int, dev.nebula.glass.WidgetTweak>) {
+        config = config.copy(widgets = widgets)
+        persistAndBroadcast()
+    }
+
     /** Pick up what the editor saved meanwhile, unless a change of our own is still waiting to be written. */
     fun reload() {
         if (!main.hasCallbacks(push)) config = GlassConfig.parse(prefs.getString(GlassSettings.KEY, null))
+    }
+
+    /**
+     * Exports ALL configuration (Light & Dark presets, all per-surface looks & follow flags, all
+     * surface switches, Shapes, and Lock screen layout including clock/date/text boxes, weights,
+     * and wallpaper filters) as formatted JSON.
+     */
+    fun exportJson(): String = JSONObject(config.toJson())
+        .put("exportApp", GlassSettings.PKG)
+        .put("exportVersion", 1)
+        .toString(2)
+
+    /**
+     * Validates and imports a full configuration JSON string, persisting and broadcasting live to
+     * SystemUI, Launcher, and MiBoard immediately.
+     */
+    fun importJson(raw: String): Boolean = try {
+        val obj = JSONObject(raw.trim())
+        if (!obj.has("global") && !obj.has("lockLayout") && !obj.has("shapes") && !obj.has("widgets")) {
+            false
+        } else {
+            main.removeCallbacks(push)
+            config = GlassConfig.parse(obj.toString())
+            persistAndBroadcast()
+            true
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "settings import failed", e)
+        false
     }
 
     /** Saving and broadcasting are coalesced so slider drags stay cheap. */

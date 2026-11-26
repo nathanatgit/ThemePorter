@@ -51,6 +51,43 @@ class GlassLab : Activity() {
             finish()
             return
         }
+        // Test hook: `--ez ticker true [--ez hu true]` updates one ongoing notification every second for 30 s
+        // (text every tick, an extra action every 5th tick to force a re-inflation), like a speed meter.
+        if (intent?.getBooleanExtra("ticker", false) == true) {
+            val nm = getSystemService(android.app.NotificationManager::class.java)
+            val hu = intent.getBooleanExtra("hu", false)
+            val ch = if (hu) "lab_headsup" else "lab_ticker"
+            nm.createNotificationChannel(android.app.NotificationChannel(ch, "Glass Lab $ch",
+                if (hu) android.app.NotificationManager.IMPORTANCE_HIGH else android.app.NotificationManager.IMPORTANCE_DEFAULT))
+            val app = applicationContext
+            Thread {
+                for (i in 0 until 30) {
+                    val b = android.app.Notification.Builder(app, ch)
+                        .setSmallIcon(android.R.drawable.ic_dialog_info).setOngoing(true).setOnlyAlertOnce(true)
+                        .setContentTitle("Ticker").setContentText("↑ ${(i * 37) % 900} KB/s  ↓ ${(i * 91) % 900} KB/s")
+                    if (i % 5 == 4) b.addAction(android.app.Notification.Action.Builder(null, "Act $i", null).build())
+                    nm.notify(9, b.build())
+                    Thread.sleep(1000)
+                }
+                nm.cancel(9)
+            }.start()
+            finish()
+            return
+        }
+        // Test hook: `--ez group true` posts a summary with three children (a stacked notification).
+        if (intent?.getBooleanExtra("group", false) == true) {
+            val nm = getSystemService(android.app.NotificationManager::class.java)
+            nm.createNotificationChannel(android.app.NotificationChannel("lab_group", "Glass Lab group",
+                android.app.NotificationManager.IMPORTANCE_DEFAULT))
+            for (i in 1..3) nm.notify(20 + i, android.app.Notification.Builder(this, "lab_group")
+                .setSmallIcon(android.R.drawable.ic_dialog_email).setGroup("labg")
+                .setContentTitle("Message $i").setContentText("Child notification body $i").build())
+            nm.notify(20, android.app.Notification.Builder(this, "lab_group")
+                .setSmallIcon(android.R.drawable.ic_dialog_email).setGroup("labg").setGroupSummary(true)
+                .setContentTitle("3 messages").setContentText("Summary").build())
+            finish()
+            return
+        }
         // Test hook: `--ez clockfonts true` renders every clock font through ClockFace into one PNG per font
         // in the app's external files dir: all ten digits and a time, in a short box and a tall one.
         if (intent?.getBooleanExtra("clockfonts", false) == true) {

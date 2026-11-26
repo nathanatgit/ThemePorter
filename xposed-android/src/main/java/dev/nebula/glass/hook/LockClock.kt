@@ -24,6 +24,7 @@ internal object LockClock {
 
     private val specs = WeakHashMap<TextView, Spec>()
     private val solid = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val liveRim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
 
     /** Where the digits' top sits, below the top of the TextView's box. */
     const val TOP_INSET = 8f
@@ -112,26 +113,52 @@ internal object LockClock {
         return face.shape(text).bounds.width() to face.height
     }
 
-    fun draw(tv: TextView, canvas: Canvas, glass: GlassStyle?, host: GlassTextHost, backdrop: () -> WallpaperBackdrop): Boolean {
+    fun draw(
+        tv: TextView,
+        canvas: Canvas,
+        glass: GlassStyle?,
+        host: GlassTextHost,
+        filterTint: Int? = null,
+        backdrop: () -> WallpaperBackdrop,
+    ): Boolean {
         val spec = specs[tv] ?: return false
         val text = tv.text?.toString()?.takeIf { it.isNotEmpty() } ?: return false
         val face = face(tv, spec.height, spec.width, spec.boldness, text) ?: return false
         val shape = face.shape(text)
-        // Digits shorter than the box (a font without a height axis) sit in its middle (user request 2026-11-24).
         val top = LockClock.TOP_INSET + maxOf(0f, (spec.height - face.height) / 2)
-        // Where Nubia aligns the row: centred (the one-line clock), else from its left or right edge.
         val b = shape.bounds
         val x = when (android.view.Gravity.getAbsoluteGravity(spec.gravity, tv.layoutDirection) and android.view.Gravity.HORIZONTAL_GRAVITY_MASK) {
             android.view.Gravity.LEFT -> tv.totalPaddingLeft - b.left
             android.view.Gravity.RIGHT -> tv.width - tv.totalPaddingRight - b.right
             else -> tv.width / 2f
         }
-        if (glass != null && host.drawShape(tv, canvas, backdrop(), glass, face, shape, x, top, neutral = true)) return true
-        // No glass, or its distance field is still being built.
+        if (glass != null && host.drawShape(tv, canvas, backdrop(), glass, face, shape, x, top, neutral = true, filterTint = filterTint)) return true
+        // Mid-drag or mid-slide (while the new SDF is baking in the background): draw a translucent
+        // frosted body + specular white rim so 120 fps height morphing keeps a Liquid Glass feel!
         val save = canvas.save()
         canvas.translate(tv.scrollX + x, tv.scrollY + top)
-        solid.color = tv.currentTextColor
-        canvas.drawPath(shape.path, solid)
+        if (glass != null) {
+            val base = filterTint ?: android.graphics.Color.WHITE
+            val body = glass.body((0x68 shl 24) or (base and 0x00FFFFFF))
+            solid.color = body
+            canvas.drawPath(shape.path, solid)
+            val dp = tv.resources.displayMetrics.density
+            liveRim.strokeWidth = (1.2f * dp).coerceAtLeast(1f)
+            val edge = glass.edgeRgb
+            liveRim.color = android.graphics.Color.argb(
+                (0xB0 * glass.glow).toInt().coerceIn(0, 255),
+                android.graphics.Color.red(edge),
+                android.graphics.Color.green(edge),
+                android.graphics.Color.blue(edge),
+            )
+            canvas.save()
+            canvas.clipPath(shape.path)
+            canvas.drawPath(shape.path, liveRim)
+            canvas.restore()
+        } else {
+            solid.color = tv.currentTextColor
+            canvas.drawPath(shape.path, solid)
+        }
         canvas.restoreToCount(save)
         return true
     }

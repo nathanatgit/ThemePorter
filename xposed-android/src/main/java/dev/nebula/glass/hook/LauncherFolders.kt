@@ -55,13 +55,17 @@ class LauncherFolders : IXposedHookLoadPackage {
             Log.w(TAG, "folder tile classes not found: X1.a=$tileDrawable"); return
         }
         HookSettings.load()
-        GlassSettings.addListener { for (d in tiles.values) d.invalidateSelf() }
+        GlassSettings.addListener { for ((t, d) in tiles) { d.invalidateSelf(); t.invalidate() } }
+        dev.nebula.glass.LightSourceController.addRedraw { if (enabled) invalidateVisibleTiles() }
         try {
             // X1.a inherits draw(); hook the declaring method and filter to X1.a instances.
             val draw = tileDrawable.getMethod("draw", Canvas::class.java)
             Log.i(TAG, "X1.a draw declared by ${draw.declaringClass.name}, super=${tileDrawable.superclass?.name}")
             de.robv.android.xposed.XposedBridge.hookMethod(draw, object : XC_MethodHook() {
                 override fun beforeHookedMethod(p: MethodHookParam) {
+                    // A Nubia widget's own card, faded out under the widget glass (LauncherWidgets): Nubia's
+                    // draw must still run, as it updates the compositor's blur region.
+                    if (p.thisObject in LauncherWidgets.hiddenCards) return
                     if (!enabled || !tileDrawable.isInstance(p.thisObject)) return
                     try {
                         if (drawGlass(p.thisObject as Drawable, p.args[0] as Canvas)) p.result = null
@@ -86,7 +90,8 @@ class LauncherFolders : IXposedHookLoadPackage {
     private fun drawGlass(d: Drawable, canvas: Canvas): Boolean {
         val host = d.callback as? View ?: return false
         if (d.bounds.isEmpty) return false
-        val unified = GlassSettings[Surface.FOLDER]
+        val night = GlassSettings.isNight(host.context)
+        val unified = GlassSettings[Surface.FOLDER, night]
         if (!unified.enabled) return false
         // A folder the user coloured in Nubia keeps its own colour over the shared tint colour.
         val own = folderColor(d)
@@ -101,12 +106,41 @@ class LauncherFolders : IXposedHookLoadPackage {
         host.getLocationOnScreen(loc)
         recordedAt[host] = (loc[0].toLong() shl 32) or (loc[1].toLong() and 0xffffffffL)
         watch(root)
-        val lens = lenses.getOrPut(host) { Looks.base(Surface.FOLDER, host.context) }
+        val lens = lenses.getOrPut(host) { Looks.base(Surface.FOLDER, host.context, night) }
         val dp = host.resources.displayMetrics.density
-        Looks.style(lens, Surface.FOLDER, dp, 16 * dp, preBlurred = preBlurred, st = style,
-            builtInTint = own ?: Looks.tint(Surface.FOLDER, false))
-        rect.set(d.bounds)
+        Looks.style(lens, Surface.FOLDER, dp, 16 * dp, night = night, preBlurred = preBlurred, st = style,
+            builtInTint = own ?: Looks.tint(Surface.FOLDER, night))
+        tileRect(host, d, dp)
         return lens.draw(canvas, host, source, rect)
+    }
+
+    /**
+     * The tile: Nubia's bounds, or with [dev.nebula.glass.Shapes.folderWidth] / folderHeight set, the cell
+     * span less that many dp, centred above the name band. Same rule as widget containers, so equal values
+     * line folders and widgets up.
+     */
+    private fun tileRect(host: View, d: Drawable, dp: Float) {
+        rect.set(d.bounds)
+        val sh = GlassSettings.config.shapes
+        if (sh.folderWidth < 0 && sh.folderHeight < 0) return
+        val w = host.width.toFloat()
+        val name = nameOf(host)
+        val areaBottom = host.height - (if (name != null && name.visibility == View.VISIBLE) dev.nebula.glass.Shapes.LABEL_BAND * dp else 0f)
+        if (sh.folderWidth >= 0) {
+            val tw = (w - sh.folderWidth * dp).coerceIn(1f, w)
+            rect.left = (w - tw) / 2f; rect.right = rect.left + tw
+        }
+        if (sh.folderHeight >= 0) {
+            val th = (areaBottom - sh.folderHeight * dp).coerceIn(1f, maxOf(1f, areaBottom))
+            rect.top = (areaBottom - th) / 2f; rect.bottom = rect.top + th
+        }
+    }
+
+    private var nameId = 0
+
+    private fun nameOf(host: View): View? {
+        if (nameId == 0) nameId = host.resources.getIdentifier("folder_icon_name", "id", LAUNCHER)
+        return if (nameId != 0) host.findViewById(nameId) else null
     }
 
     private var loggedState = false

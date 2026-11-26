@@ -19,8 +19,10 @@ import dev.nebula.glass.GlassAccessibility
 import dev.nebula.glass.GlassSettings
 import dev.nebula.glass.GlassSkin
 import dev.nebula.glass.GlassStyle
+import dev.nebula.glass.LensGlass
 import dev.nebula.glass.Looks
 import dev.nebula.glass.Surface
+import dev.nebula.glass.WallpaperBackdrop
 import java.lang.ref.WeakReference
 import java.lang.reflect.Field
 import java.lang.reflect.Method
@@ -72,6 +74,7 @@ class SystemUiPanels : IXposedHookLoadPackage {
         installed = true
         HookSettings.load()
         GlassSettings.addListener { redrawPanels() }
+        dev.nebula.glass.LightSourceController.addRedraw { redrawCards() }
         val notif = XposedHelpers.findClassIfExists("com.android.systemui.statusbar.notification.row.NotificationBackgroundView", app.classLoader)
         if (notif != null) {
             bgField = XposedHelpers.findFieldIfExists(notif, "mBackground")
@@ -90,14 +93,12 @@ class SystemUiPanels : IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod(View::class.java, "onAttachedToWindow", refresh)
             // Hide signals for the live blur regions (see updateBlursUnder).
             val hide = object : XC_MethodHook() {
-                override fun afterHookedMethod(p: MethodHookParam) {
-                    try { updateBlursUnder(p.thisObject as View, true) } catch (t: Throwable) { Log.e(TAG, "blur drop", t) }
-                }
+                override fun afterHookedMethod(p: MethodHookParam) { hideBlursLater(p.thisObject as View) }
             }
             XposedHelpers.findAndHookMethod(View::class.java, "onDetachedFromWindow", hide)
             XposedHelpers.findAndHookMethod(View::class.java, "onVisibilityAggregated", Boolean::class.javaPrimitiveType, object : XC_MethodHook() {
                 override fun afterHookedMethod(p: MethodHookParam) {
-                    if (p.args[0] == false) try { updateBlursUnder(p.thisObject as View, true) } catch (t: Throwable) { Log.e(TAG, "blur drop", t) }
+                    if (p.args[0] == false) hideBlursLater(p.thisObject as View)
                     if (p.args[0] == true && p.thisObject.javaClass.simpleName == "NotificationShadeWindowView") refreshShadeText(p.thisObject as View)
                 }
             })
@@ -143,6 +144,17 @@ class SystemUiPanels : IXposedHookLoadPackage {
             })
             // The shade media player's seek bar is black on black, in both modes. The control centre's
             // brightness and volume sliders get a glass track under Nubia's own fill.
+            // Because those SeekBars have rotation=270, HWUI's BlurRegion drops corner radii to 0 on them
+            // (leaving a rectangular ghost outside pill corners); host their liveBlur on the unrotated parent!
+            XposedHelpers.findAndHookMethod(android.view.ViewGroup::class.java, "dispatchDraw", Canvas::class.java, object : XC_MethodHook() {
+                override fun beforeHookedMethod(p: MethodHookParam) {
+                    val vg = p.thisObject as View
+                    val spec = sliderParents[vg] ?: return
+                    try {
+                        drawSliderParentBlur(vg, p.args[0] as Canvas, spec)
+                    } catch (t: Throwable) { Log.e(TAG, "slider blur", t) }
+                }
+            })
             XposedHelpers.findAndHookMethod(android.widget.ProgressBar::class.java, "onDraw", Canvas::class.java, object : XC_MethodHook() {
                 private val white = android.graphics.Paint().apply { colorFilter = android.graphics.PorterDuffColorFilter(Color.WHITE, android.graphics.PorterDuff.Mode.SRC_IN) }
                 override fun beforeHookedMethod(p: MethodHookParam) {
@@ -165,11 +177,157 @@ class SystemUiPanels : IXposedHookLoadPackage {
             // Tiles swap or recolour their background on state changes; notifications set custom ones.
             XposedHelpers.findAndHookMethod(View::class.java, "setBackgroundDrawable", Drawable::class.java, refresh)
             if (notif != null) XposedBridge.hookAllMethods(notif, "setCustomBackground", refresh)
+            if (notif != null) hookNotificationBackground(notif, app.classLoader)
+            hookGroupHeader()
             Log.i(TAG, "notification / control centre glass hooks installed")
         } catch (t: Throwable) {
             Log.e(TAG, "panel hooks failed", t)
         }
     }
+
+    /** NotificationBackgroundView's geometry fields (see its getActualHeight / draw(Canvas, Drawable)). */
+    private class NotifFields(private val cls: Class<*>) {
+        private fun f(n: String) = XposedHelpers.findField(cls, n)
+        val actualH = f("mActualHeight"); val actualW = f("mActualWidth")
+        val expanding = f("mExpandAnimationRunning"); val expandH = f("mExpandAnimationHeight"); val expandW = f("mExpandAnimationWidth")
+        val bottomRounded = f("mBottomIsRounded"); val bottomClips = f("mBottomAmountClips")
+        val clipTop = f("mClipTopAmount"); val clipBottom = f("mClipBottomAmount")
+    }
+
+    /**
+     * Notification cards: replace `NotificationBackgroundView.onDraw` itself rather than one of its
+     * drawables. Nubia swaps `mBackground` on refreshes (a new RippleDrawable, the heads-up
+     * `mBlurBgNormal` via setCustomBackgroundForBlur 50 ms later, the lock screen's async blurred
+     * LayerDrawable 40 ms later): any frame drawn with an untracked drawable showed the stock opaque
+     * card, which is the flicker seen when an ongoing notification updates every second. Drawing
+     * from the view's own geometry makes the glass independent of whatever drawable is current, and
+     * Nubia's competing CPU blurs are skipped while glass is on.
+     */
+    private fun hookNotificationBackground(notif: Class<*>, cl: ClassLoader) {
+        val fields = try { NotifFields(notif) } catch (t: Throwable) { Log.w(TAG, "notification bg fields", t); null }
+        if (fields != null) {
+            XposedHelpers.findAndHookMethod(notif, "onDraw", Canvas::class.java, object : XC_MethodHook() {
+                override fun beforeHookedMethod(p: MethodHookParam) {
+                    try { if (drawNotificationBackground(p.thisObject as View, p.args[0] as Canvas, fields)) p.result = null }
+                    catch (t: Throwable) { Log.e(TAG, "notification bg", t) }
+                }
+            })
+            Log.i(TAG, "notification background onDraw hooked")
+        }
+        val gauss = XposedHelpers.findClassIfExists("com.zte.utils.GaussBlur", cl) ?: return
+        fun glassOn(row: Any?, s: Surface): Boolean {
+            val v = row as? View ?: return false
+            return GlassSettings[cardSurface(s, v), night(v)].enabled && !reducedTransparency(v)
+        }
+        try {
+            XposedBridge.hookAllMethods(gauss, "blurRowNormal", object : XC_MethodHook() {
+                override fun beforeHookedMethod(p: MethodHookParam) {
+                    try { if (glassOn(p.args.getOrNull(0), Surface.NOTIFICATION)) p.result = null } catch (_: Throwable) {}
+                }
+            })
+            XposedBridge.hookAllMethods(gauss, "blurKeyguardNotificationView", object : XC_MethodHook() {
+                override fun beforeHookedMethod(p: MethodHookParam) {
+                    try {
+                        val v = p.args.getOrNull(0) as? View ?: return
+                        if (GlassSettings[Surface.LOCK_CARD, night(v)].enabled && !reducedTransparency(v)) p.result = null
+                    } catch (_: Throwable) {}
+                }
+            })
+            Log.i(TAG, "GaussBlur row blurs skipped while glass is on")
+        } catch (t: Throwable) { Log.w(TAG, "GaussBlur hooks", t) }
+    }
+
+    /**
+     * An expanded notification group gives its header an opaque fill
+     * (`NotificationChildrenContainer.updateHeaderForExpansion` -> `setHeaderBackgroundDrawable(ColorDrawable)`,
+     * `notification_children_container_header_bg_color`). `NotificationHeaderView` paints it in its own
+     * onDraw from a private field, so it is not the view's background: it was the light strip covering the
+     * group title. With card glass on, the header sits on the summary's glass and gets no fill.
+     */
+    private fun hookGroupHeader() {
+        try {
+            val cls = Class.forName("android.view.NotificationHeaderView")
+            XposedHelpers.findAndHookMethod(cls, "setHeaderBackgroundDrawable", Drawable::class.java, object : XC_MethodHook() {
+                override fun beforeHookedMethod(p: MethodHookParam) {
+                    if (p.args[0] == null) return
+                    try {
+                        val v = p.thisObject as View
+                        val st = GlassSettings[cardSurface(Surface.NOTIFICATION, v), night(v)]
+                        if (st.enabled && !reducedTransparency(v)) p.args[0] = null
+                    } catch (t: Throwable) { Log.e(TAG, "group header", t) }
+                }
+            })
+        } catch (t: Throwable) { Log.w(TAG, "group header hook", t) }
+    }
+
+    private fun drawNotificationBackground(v: View, c: Canvas, f: NotifFields): Boolean {
+        if (!PANEL_SKIN_DRAW) return false
+        val surface = cardSurface(Surface.NOTIFICATION, v)
+        val st = withCardCorner(GlassSettings[surface, night(v)], surface)
+        if (!st.enabled || reducedTransparency(v)) { dropBlur(v); return false }
+        if (!settingsAttached) { settingsAttached = true; HookSettings.attach(v.context); followLockState(v.context) }
+        // A row has two background views (normal and dimmed); the invisible one must not paint a second glass.
+        if (v.alpha < 0.02f || v.visibility != View.VISIBLE) { traceLog(v) { "skip hidden a=${v.alpha} vis=${v.visibility}" }; return true }
+        // Children of a notification group sit inside the summary's glass: they must not paint panes of their own.
+        if ((v.parent as? View)?.parent?.javaClass?.simpleName == "NotificationChildrenContainer") { dropBlur(v); return true }
+        // Normal and dimmed backgrounds are both visible and stacked: the upper one paints, the lower must not.
+        (v.parent as? android.view.ViewGroup)?.let { g ->
+            for (i in g.indexOfChild(v) + 1 until g.childCount) {
+                val o = g.getChildAt(i)
+                if (o.javaClass == v.javaClass && o.visibility == View.VISIBLE && o.alpha >= 0.02f) { traceLog(v) { "skip covered" }; dropBlur(v); return true }
+            }
+        }
+        val expand = f.expanding.getBoolean(v)
+        val h = f.actualH.getInt(v).let { a -> f.expandH.getInt(v).takeIf { expand && it > -1 } ?: if (a > -1) a else rowHeight(v) }
+        val w = f.actualW.getInt(v).let { a -> f.expandW.getInt(v).takeIf { expand && it > -1 } ?: if (a > -1) a else v.width }
+        val clipT = f.clipTop.getInt(v)
+        val clipB = f.clipBottom.getInt(v)
+        if (clipT + clipB >= h && !expand) { dropBlur(v); return true }
+        val bgH = if (f.bottomRounded.getBoolean(v) && f.bottomClips.getBoolean(v) && !expand) h - clipB else h
+        val rtl = v.layoutDirection == View.LAYOUT_DIRECTION_RTL
+        var l = if (rtl) v.width - w else 0
+        var r = if (rtl) v.width else w
+        if (expand) { l = ((v.width - w) / 2f).toInt(); r = l + w }
+        if (bgH <= 0 || r <= l) { dropBlur(v); return true }
+        val dp = v.resources.displayMetrics.density
+        val save = c.save()
+        try {
+            if (!expand) c.clipRect(0, clipT, v.width, h)
+            rect.set(l.toFloat(), 0f, r.toFloat(), bgH.toFloat())
+            val radii = if (st.cornerDp != GlassStyle.ORIGINAL) cornerOverride(st, rect, dp)
+                else cardRadii(v, dp)
+            drawGlass(v, c, rect, radii, surface, st, null, dp)
+        } finally {
+            c.restoreToCount(save)
+        }
+        return true
+    }
+
+    /** Height the row really shows: its own getActualHeight, which a background view reports as -1 while collapsed. */
+    private fun rowHeight(v: View): Int {
+        val row = v.parent as? View ?: return v.height
+        return try { (XposedHelpers.callMethod(row, "getActualHeight") as? Int)?.takeIf { it > 0 }?.coerceAtMost(v.height) ?: v.height }
+        catch (_: Throwable) { v.height }
+    }
+
+    /** Stock radii of a card: the view's own field, else its current background drawable, else a default. */
+    private fun cardRadii(v: View, dp: Float): FloatArray {
+        fun ok(a: FloatArray?) = a?.takeIf { it.size == 8 && it.any { x -> x > 0.5f } }
+        val base = ok(radiiField?.get(v) as? FloatArray) ?: ok((bgField?.get(v) as? Drawable)?.let { radiiOf(it) })
+        base?.max()?.let { stockCardRadius = it }
+        // Cards are separate glass panes with gaps between them: round all four corners.
+        return GlassSkin.uniform(base?.max() ?: (20 * dp))
+    }
+
+    /** Nubia's corner of a full notification card, as last seen on one: the media card uses it too. */
+    @Volatile private var stockCardRadius = 0f
+
+    /**
+     * The corner setting a card follows: Notification corner in the shade, Lock card corner on the lock
+     * screen (its own surface), Heads-up corner for a card shown over an app (the shade window closed).
+     */
+    private fun withCardCorner(st: GlassStyle, surface: Surface): GlassStyle =
+        if (surface == Surface.NOTIFICATION && !shadeOpen()) st.copy(cornerDp = GlassSettings.config.shapes.headsUpCorner) else st
 
     private val blurSeen = HashSet<String>()
 
@@ -248,6 +406,35 @@ class SystemUiPanels : IXposedHookLoadPackage {
     private val mediaRect = RectF()
     /** Media cards seen so far: they have no tracked drawable to redraw them by. */
     private val mediaViews = WeakHashMap<View, Boolean>()
+    /** Media containers re-shaped for the glass: their stock outline provider and clip, restored when glass is off. */
+    private val stockOutlines = WeakHashMap<View, Pair<android.view.ViewOutlineProvider?, Boolean>>()
+    private val stockOutlineRadius = WeakHashMap<View, Float?>()
+    private val glassOutlineRadius = WeakHashMap<View, Float>()
+
+    /**
+     * The media panel is taller than its container, which hides the overflow with a rounded outline clip.
+     * Turning that clip off showed the overflow under the card; keeping Nubia's outline cut the glass to
+     * Nubia's radius. So the container clips to the glass's own rounded box instead.
+     */
+    private fun clipContainerTo(container: View, radius: Float, stockRadius: Float?) {
+        if (container !in stockOutlines) {
+            stockOutlines[container] = container.outlineProvider to container.clipToOutline
+            stockOutlineRadius[container] = stockRadius
+        }
+        val ours = container.outlineProvider === glassOutline
+        if (ours && glassOutlineRadius[container] == radius && container.clipToOutline) return
+        glassOutlineRadius[container] = radius
+        if (!ours) container.outlineProvider = glassOutline
+        container.clipToOutline = true
+        container.invalidateOutline()
+    }
+
+    private val glassOutline = object : android.view.ViewOutlineProvider() {
+        override fun getOutline(view: View, outline: android.graphics.Outline) {
+            val r = glassOutlineRadius[view] ?: 0f
+            outline.setRoundRect(0, 0, view.width, view.height, r.coerceAtMost(minOf(view.width, view.height) / 2f))
+        }
+    }
     private var mediaLogged = false
 
     /** Corner radius of the container's outline, when it clips to a rounded shape. */
@@ -262,9 +449,16 @@ class SystemUiPanels : IXposedHookLoadPackage {
 
     private fun drawMediaPanel(v: View, c: Canvas): Boolean {
         mediaViews[v] = true
-        val st = GlassSettings[cardSurface(Surface.NOTIFICATION, v)]
-        if (!st.enabled || reducedTransparency(v)) { dropBlur(v); return false }
+        val surf = cardSurface(Surface.NOTIFICATION, v)
+        val st = withCardCorner(GlassSettings[surf, night(v)], surf)
         val container = v.parent as? View ?: return false
+        if (!st.enabled || reducedTransparency(v)) {
+            dropBlur(v)
+            stockOutlines.remove(container)?.let { (provider, clip) ->
+                container.outlineProvider = provider; container.clipToOutline = clip
+            }
+            return false
+        }
         val dp = v.resources.displayMetrics.density
         // Visible part = the container's box, in this view's coordinates, on both axes (the panel is
         // wider and taller than the container that clips it, so square corners were being cut off).
@@ -273,12 +467,14 @@ class SystemUiPanels : IXposedHookLoadPackage {
         mediaRect.set(left, top,
             (left + container.width).coerceAtMost(v.width.toFloat()),
             (top + container.height).coerceAtMost(v.height.toFloat()))
-        // Corners: the container's own blur shape if it has one (so glass fills the rounded blur),
-        // else the largest radius a notification card uses (middle cards of a group use 0).
-        val own = containerRadius(container)
-        val radius = own ?: tracked.values.filter { it.surface == Surface.NOTIFICATION }
-            .mapNotNull { it.radii()?.maxOrNull() }.maxOrNull()?.takeIf { it > 0f } ?: (20 * dp)
-        val radii = GlassSkin.uniform(radius)
+        // Corners: exactly those of the notification cards around it. The user's corner setting for this
+        // place (shade, lock screen, heads-up), else Nubia's card radius; the container's own rounded
+        // clip only when no card has been seen yet.
+        val own = if (container in stockOutlines) stockOutlineRadius[container] else containerRadius(container)
+        val radius = stockCardRadius.takeIf { it > 0f } ?: own ?: (20 * dp)
+        val radii = if (st.cornerDp != GlassStyle.ORIGINAL) cornerOverride(st, mediaRect, dp)
+            else GlassSkin.uniform(radius)
+        clipContainerTo(container, radii[0], own)
         if (!mediaLogged) {
             mediaLogged = true
             Log.i(TAG, "media panel rect=$mediaRect view=${v.left},${v.top} ${v.width}x${v.height} container=${container.width}x${container.height} " +
@@ -340,7 +536,7 @@ class SystemUiPanels : IXposedHookLoadPackage {
         if (!PANEL_SKIN_DRAW) return false
         val host = t.host.get() ?: return false
         val surface = cardSurface(t.surface, host)
-        val st = GlassSettings[surface]
+        val st = GlassSettings[surface, night(host)]
         if (!st.enabled || reducedTransparency(host)) { dropBlur(host); return false }
         val color = colorOf(d, host)
         val dp = host.resources.displayMetrics.density
@@ -363,16 +559,211 @@ class SystemUiPanels : IXposedHookLoadPackage {
      *  - the lock screen (undimmed): frosted glass in the tone of Nubia's text;
      *  - an app, as a heads-up (undimmed): a dark body, white text.
      */
-    private fun drawGlass(host: View, c: Canvas, r: RectF, radii: FloatArray, surface: Surface, st: GlassStyle, active: Int?, dp: Float) {
-        // Without the dim layer the scrim is in the window, and a blur region would be dimmed twice.
-        if (dim.available) liveBlur(host, c, r, radii, st.blurPx(Looks.PANEL_CARD_BLUR_PX), Looks.PANEL_CARD_SATURATION)
+    private fun drawGlass(host: View, c: Canvas, r: RectF, radii: FloatArray, surface: Surface, st: GlassStyle, active: Int?, dp: Float, withBlur: Boolean = true) {
+        val night = night(host)
         val body = when {
-            surface == Surface.LOCK_CARD -> Looks.lockCardBody(st, night(host))
+            surface == Surface.LOCK_CARD -> Looks.lockCardBody(st, night)
             // A heads-up over an app: frosted glass in the tone of Nubia's own text, as on the lock screen.
-            surface == Surface.NOTIFICATION && !shadeOpen() -> Looks.headsUpBody(st, night(host))
-            else -> Looks.panelBody(surface, st, night(host), active)
+            surface == Surface.NOTIFICATION && !shadeOpen() -> Looks.headsUpBody(st, night)
+            else -> Looks.panelBody(surface, st, night, active)
         }
-        skin.drawPanel(c, r, radii, body, Looks.specular(surface) * st.glow, dp)
+        if (surface == Surface.LOCK_CARD && withBlur && drawLockCardLens(host, c, r, radii, st, body, dp)) {
+            return
+        }
+        // Without the dim layer the scrim is in the window, and a blur region would be dimmed twice.
+        if (withBlur && dim.available) liveBlur(host, c, r, radii, st.blurPx(Looks.PANEL_CARD_BLUR_PX), Looks.panelSaturation(st))
+        val rot = host.rotation
+        if (kotlin.math.abs(rot) > 1f) {
+            val rad = Math.toRadians((-rot).toDouble())
+            val cos = kotlin.math.cos(rad).toFloat()
+            val sin = kotlin.math.sin(rad).toFloat()
+            val lx = st.lightX * cos - st.lightY * sin
+            val ly = st.lightX * sin + st.lightY * cos
+            skin.drawPanel(c, r, radii, body, Looks.specular(surface) * st.glow, dp, st.edgeRgb, st.glowRgb, lx, ly)
+        } else {
+            skin.drawPanel(c, r, radii, body, Looks.specular(surface) * st.glow, dp, st)
+        }
+    }
+
+    /** Guard preventing nested lock-card lens capture when Card #0 records peeking Card #1 underneath it. */
+    private var inLockCardCapture = false
+    private val lockCardLenses = WeakHashMap<View, LensGlass>()
+    private val lockCardAt = WeakHashMap<View, Long>()
+    private val lockCardClipRect = RectF()
+    private val lockCardRadii4 = FloatArray(4)
+    private var lockCardBackdrop: LockSceneBackdrop? = null
+
+    @android.annotation.SuppressLint("ViewConstructor")
+    private inner class LockSceneBackdrop(ctx: android.content.Context) : View(ctx) {
+        var shadeRoot: android.view.ViewGroup? = null
+        var cardRow: View? = null
+        val wantScreen = RectF()
+        private val loc = IntArray(2)
+        private val veil = android.graphics.Paint()
+
+        fun layoutTo(w: Int, h: Int) {
+            if (w == width && h == height) return
+            measure(MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY))
+            layout(0, 0, w, h)
+        }
+
+        private fun overlaps(v: View): Boolean {
+            if (!v.isShown || v.alpha <= 0.02f || v.width <= 0 || v.height <= 0) return false
+            v.getLocationOnScreen(loc)
+            val l = loc[0].toFloat()
+            val t = loc[1].toFloat()
+            val r = l + v.width * v.scaleX.coerceAtLeast(0.5f)
+            val b = t + v.height * v.scaleY.coerceAtLeast(0.5f)
+            return r > wantScreen.left && l < wantScreen.right && b > wantScreen.top && t < wantScreen.bottom
+        }
+
+        private fun drawBranch(c: Canvas, v: View) {
+            if (!overlaps(v)) return
+            v.getLocationOnScreen(loc)
+            val save = c.save()
+            val a = v.alpha
+            if (a < 0.99f) {
+                c.saveLayerAlpha(loc[0].toFloat(), loc[1].toFloat(), loc[0] + v.width.toFloat(), loc[1] + v.height.toFloat(), (a * 255).toInt())
+            }
+            c.translate(loc[0].toFloat(), loc[1].toFloat())
+            if (v.scaleX != 1f || v.scaleY != 1f) c.scale(v.scaleX, v.scaleY, 0f, 0f)
+            v.draw(c)
+            c.restoreToCount(save)
+        }
+
+        override fun onDraw(c: Canvas) {
+            val root = shadeRoot ?: return
+            val wp = WallpaperBackdrop.sharedLock(context)
+            wp.layoutTo(width, height)
+            wp.draw(c)
+            val lw = GlassSettings[Surface.LOCK_WIDGET, context]
+            if (lw.enabled) {
+                val dimA = Looks.backdropDim(Surface.LOCK_WIDGET, lw)
+                if (dimA > 0f) {
+                    veil.color = Color.argb((dimA * 255).toInt(), 0, 0, 0)
+                    c.drawPaint(veil)
+                }
+            }
+            fun named(n: String): View? {
+                val id = root.resources.getIdentifier(n, "id", SYSTEMUI)
+                return if (id != 0) root.findViewById(id) else null
+            }
+            val statusRoot = named("keyguard_status_view") ?: named("clock_status_view") ?: named("keyguard_clock_container")
+            if (statusRoot != null) drawBranch(c, statusRoot)
+            val widgetBox = named("keyguard_widget_container_id")
+            if (widgetBox != null && (statusRoot == null || !isDescendant(widgetBox, statusRoot))) {
+                drawBranch(c, widgetBox)
+            }
+
+            val row = cardRow
+            val stack = row?.parent as? android.view.ViewGroup
+            if (stack != null && !inLockCardCapture) {
+                inLockCardCapture = true
+                try {
+                    val myZ = row.translationZ + row.elevation
+                    val myIdx = stack.indexOfChild(row)
+                    for (i in 0 until stack.childCount) {
+                        val sib = stack.getChildAt(i)
+                        if (sib === row || !sib.isShown || sib.alpha <= 0.02f) continue
+                        val sibZ = sib.translationZ + sib.elevation
+                        val behind = sibZ < myZ - 0.05f || (kotlin.math.abs(sibZ - myZ) <= 0.05f && i < myIdx)
+                        if (behind) drawBranch(c, sib)
+                    }
+                } finally {
+                    inLockCardCapture = false
+                }
+            }
+        }
+
+        private fun isDescendant(child: View, ancestor: View): Boolean {
+            var p = child.parent
+            while (p is View) { if (p === ancestor) return true; p = p.parent }
+            return false
+        }
+    }
+
+    private fun stackRowOf(v: View): View? {
+        var cur: View? = v
+        while (cur != null) {
+            val p = cur.parent as? View
+            if (p?.javaClass?.simpleName == "NotificationStackScrollLayout") return cur
+            cur = p
+        }
+        return null
+    }
+
+    private fun drawLockCardLens(host: View, c: Canvas, r: RectF, radii: FloatArray, st: GlassStyle, body: Int, dp: Float): Boolean {
+        if (!c.isHardwareAccelerated) return false
+        if (inLockCardCapture) {
+            skin.drawPanel(c, r, radii, body, Looks.specular(Surface.LOCK_CARD) * st.glow, dp, st)
+            return true
+        }
+        val shadeRoot = host.rootView as? android.view.ViewGroup ?: return false
+        if (shadeRoot.width <= 0 || shadeRoot.height <= 0) return false
+        watchLockCards(shadeRoot)
+
+        val wp = WallpaperBackdrop.sharedLock(host.context)
+        val cutTopPx = maxOf(r.top, clipAmount(clipTopField, host).toFloat())
+        val cutBotPx = r.bottom - clipAmount(clipBottomField, host)
+        if (cutTopPx >= cutBotPx) { dropBlur(host); return true }
+
+        host.getLocationOnScreen(hostAt)
+        lockCardAt[host] = (hostAt[0].toLong() shl 32) or (hostAt[1].toLong() and 0xffffffffL)
+
+        val lens = lockCardLenses.getOrPut(host) { Looks.base(Surface.LOCK_CARD, host.context, night(host)) }
+        if (!wp.isLive && wp.bitmap != null && lens.isAvailable) {
+            dropBlur(host)
+            val back = lockCardBackdrop ?: LockSceneBackdrop(host.context.applicationContext).also {
+                lockCardBackdrop = it
+                wp.addListener { redrawCards() }
+            }
+            back.layoutTo(shadeRoot.width, shadeRoot.height)
+            back.shadeRoot = shadeRoot
+            back.cardRow = stackRowOf(host)
+            val pad = 96f
+            back.wantScreen.set(
+                hostAt[0] + r.left - pad,
+                hostAt[1] + cutTopPx - pad,
+                hostAt[0] + r.right + pad,
+                hostAt[1] + cutBotPx + pad,
+            )
+
+            lockCardClipRect.set(r.left, cutTopPx, r.right, cutBotPx)
+            val cutAbove = cutTopPx > r.top + 0.5f
+            val cutBelow = cutBotPx < r.bottom - 0.5f
+            lockCardRadii4[0] = if (cutAbove) 0f else radii[0]
+            lockCardRadii4[1] = if (cutAbove) 0f else radii[2]
+            lockCardRadii4[2] = if (cutBelow) 0f else radii[4]
+            lockCardRadii4[3] = if (cutBelow) 0f else radii[6]
+
+            Looks.style(lens, Surface.LOCK_CARD, dp, radii[0], night = night(host), st = st)
+            lens.glassTint = body
+            lens.frostCoat = !st.tinted
+            lens.cornerRadii4 = lockCardRadii4
+            lens.blurRadiusOverride = st.blurPx(14f * dp).coerceIn(0f, 80f)
+            if (lens.draw(c, host, back, lockCardClipRect)) return true
+        }
+        return false
+    }
+
+    private val watchedLockRoots = WeakHashMap<View, Boolean>()
+    private val lockVisRect = android.graphics.Rect()
+
+    private fun watchLockCards(root: View) {
+        if (watchedLockRoots.put(root, true) != null) return
+        root.viewTreeObserver.addOnPreDrawListener {
+            if (isLocked(root)) {
+                try {
+                    for ((h, prev) in lockCardAt.entries.toList()) {
+                        if (!h.isAttachedToWindow || !h.isShown || !h.getGlobalVisibleRect(lockVisRect)) continue
+                        h.getLocationOnScreen(hostAt)
+                        val now = (hostAt[0].toLong() shl 32) or (hostAt[1].toLong() and 0xffffffffL)
+                        if (now != prev) h.invalidate()
+                    }
+                } catch (_: Throwable) {}
+            }
+            true
+        }
     }
 
     private class LiveBlur(val root: Any, val drawable: Drawable, host: View) {
@@ -382,6 +773,34 @@ class SystemUiPanels : IXposedHookLoadPackage {
         var cutTop = 0
         var lastAlpha = -1
         var windowName = ""
+        // Last values handed to the BackgroundBlurDrawable: every setter call marks the blur region dirty
+        // and schedules another compositor update, which blinked cards refreshed once a second.
+        var appliedAlpha = -1
+        var lastRadius = -1
+        var lastSat = Float.NaN
+        val lastCorners = FloatArray(4) { -1f }
+        val lastBounds = android.graphics.Rect()
+        var colorCleared = false
+    }
+
+    private var traceAt = 0L
+    private var traceOn = false
+    private var traceStacks = 0
+
+    /** `adb shell setprop debug.nebula.blurtrace 1` logs every blur-region change (re-read every 2 s). */
+    private fun trace(): Boolean {
+        val now = SystemClock.uptimeMillis()
+        if (now - traceAt > 2000) {
+            traceAt = now
+            val was = traceOn
+            traceOn = try { XposedHelpers.callStaticMethod(Class.forName("android.os.SystemProperties"), "getBoolean", "debug.nebula.blurtrace", false) == true } catch (_: Throwable) { false }
+            if (traceOn && !was) traceStacks = 0
+        }
+        return traceOn
+    }
+
+    private inline fun traceLog(host: View, what: () -> String) {
+        if (trace()) Log.i(TAG, "blurtrace ${SystemClock.uptimeMillis()} ${host.javaClass.simpleName}@${Integer.toHexString(System.identityHashCode(host))} ${what()}")
     }
 
     /** Keyed by the drawable (cards, tiles) or the view (media cards). Guarded by itself: draws come from several threads. */
@@ -404,6 +823,7 @@ class SystemUiPanels : IXposedHookLoadPackage {
             val lb = synchronized(liveBlurs) {
                 var x = liveBlurs[host]
                 if (x == null || x.root !== root) {
+                    traceLog(host) { "new region (replacing=${x != null})" }
                     x = LiveBlur(root, XposedHelpers.callMethod(root, "createBackgroundBlurDrawable") as Drawable, host).also {
                         it.windowName = topName(host)
                         scrollerOf(host)?.let { s -> it.scroller = WeakReference(s); followScroll(host.rootView) }
@@ -419,9 +839,10 @@ class SystemUiPanels : IXposedHookLoadPackage {
             val top = maxOf(rect.top + lb.cutTop, clipAmount(clipTopField, host).toFloat())
             val bottom = rect.bottom - clipAmount(clipBottomField, host)
             lb.lastAlpha = regionAlpha(lb, host)
-            b.alpha = if (top >= bottom) 0 else lb.lastAlpha
+            val wantAlpha = if (top >= bottom) 0 else lb.lastAlpha
+            if (wantAlpha != lb.appliedAlpha) { traceLog(host) { "alpha ${lb.appliedAlpha}->$wantAlpha rect=$rect top=$top bottom=$bottom" }; b.alpha = wantAlpha; lb.appliedAlpha = wantAlpha }
             if (top >= bottom) return
-            XposedHelpers.callMethod(b, "setBlurRadius", radiusPx.toInt())
+            if (radiusPx.toInt() != lb.lastRadius) { XposedHelpers.callMethod(b, "setBlurRadius", radiusPx.toInt()); lb.lastRadius = radiusPx.toInt() }
             // Per corner (grouped cards round only some); square where the scroll view cuts.
             val cut = top > rect.top
             val cutBelow = bottom < rect.bottom
@@ -429,11 +850,22 @@ class SystemUiPanels : IXposedHookLoadPackage {
             // behind pill sliders), so stay just under it.
             val most = (minOf(rect.width(), bottom - top) / 2f - 1f).coerceAtLeast(0f)
             fun r(i: Int) = radii[i].coerceAtMost(most)
-            XposedHelpers.callMethod(b, "setCornerRadius", if (cut) 0f else r(0), if (cut) 0f else r(2),
-                if (cutBelow) 0f else r(6), if (cutBelow) 0f else r(4))
-            try { XposedHelpers.callMethod(b, "setColor", 0) } catch (_: Throwable) {}   // no tint of its own: the skin supplies the body
-            try { XposedHelpers.callMethod(b, "setSaturation", saturation) } catch (_: Throwable) {}   // Nubia's addition to the AOSP drawable
-            b.setBounds(rect.left.toInt(), top.toInt(), rect.right.toInt(), bottom.toInt())
+            val cTL = if (cut) 0f else r(0); val cTR = if (cut) 0f else r(2)
+            val cBL = if (cutBelow) 0f else r(6); val cBR = if (cutBelow) 0f else r(4)
+            val lc = lb.lastCorners
+            if (lc[0] != cTL || lc[1] != cTR || lc[2] != cBL || lc[3] != cBR) {
+                traceLog(host) { "corners $cTL $cTR $cBL $cBR" }
+                lc[0] = cTL; lc[1] = cTR; lc[2] = cBL; lc[3] = cBR
+                XposedHelpers.callMethod(b, "setCornerRadius", cTL, cTR, cBL, cBR)
+            }
+            if (!lb.colorCleared) { lb.colorCleared = true; try { XposedHelpers.callMethod(b, "setColor", 0) } catch (_: Throwable) {} }   // no tint of its own: the skin supplies the body
+            if (saturation != lb.lastSat) { lb.lastSat = saturation; try { XposedHelpers.callMethod(b, "setSaturation", saturation) } catch (_: Throwable) {} }   // Nubia's addition to the AOSP drawable
+            val bl = rect.left.toInt(); val bt = top.toInt(); val br = rect.right.toInt(); val bb = bottom.toInt()
+            if (lb.lastBounds.left != bl || lb.lastBounds.top != bt || lb.lastBounds.right != br || lb.lastBounds.bottom != bb) {
+                traceLog(host) { "bounds ${lb.lastBounds} -> $bl,$bt,$br,$bb" }
+                lb.lastBounds.set(bl, bt, br, bb)
+                b.setBounds(bl, bt, br, bb)
+            }
             b.draw(c)
         } catch (t: Throwable) {
             liveBlurBroken = true
@@ -447,6 +879,7 @@ class SystemUiPanels : IXposedHookLoadPackage {
      */
     private fun dropBlur(host: View) {
         val lb = synchronized(liveBlurs) { liveBlurs.remove(host) } ?: return
+        traceLog(host) { "drop" }
         try { lb.drawable.alpha = 0 } catch (_: Throwable) {}
     }
 
@@ -537,7 +970,8 @@ class SystemUiPanels : IXposedHookLoadPackage {
                 val a = regionAlpha(lb, host)
                 if (a == lb.lastAlpha) continue
                 lb.lastAlpha = a
-                try { lb.drawable.alpha = a } catch (_: Throwable) {}
+                traceLog(host) { "window $name alpha $a" }
+                try { lb.drawable.alpha = a; lb.appliedAlpha = a } catch (_: Throwable) {}
             }
         }
     }
@@ -567,7 +1001,7 @@ class SystemUiPanels : IXposedHookLoadPackage {
 
     private fun redrawCards() {
         val blurred = synchronized(liveBlurs) { liveBlurs.values.mapNotNull { it.host.get() } }
-        for (h in hostsByDrawable + blurred + mediaViews.keys + sliders.keys) h.invalidate()
+        for (h in hostsByDrawable + blurred + lockCardLenses.keys + mediaViews.keys + sliders.keys + sliderParents.keys) h.invalidate()
     }
 
     /** After a settings change: cards and tiles, plus the text and icons whose colour follows the on/off. */
@@ -610,10 +1044,31 @@ class SystemUiPanels : IXposedHookLoadPackage {
                 // Small steps are skipped: every change invalidates the card, so a fade is followed in coarse steps.
                 if (a == lb.lastAlpha || (a != 0 && lb.lastAlpha != 0 && kotlin.math.abs(a - lb.lastAlpha) < 8)) continue
                 lb.lastAlpha = a
-                try { lb.drawable.alpha = a } catch (_: Throwable) {}
+                traceLog(host) { "under ${root.javaClass.simpleName}@${Integer.toHexString(System.identityHashCode(root))} hide=$hide alpha $a" }
+                if (hide && trace() && traceStacks++ < 4) Log.i(TAG, "blurtrace stack", Throwable())
+                try { lb.drawable.alpha = a; lb.appliedAlpha = a } catch (_: Throwable) {}
             }
         }
     }
+    private val pendingHides = java.util.Collections.newSetFromMap(WeakHashMap<View, Boolean>())
+
+    /**
+     * A detach or hide is acted on only if it is still true a moment later. Every list rebuild (any
+     * notification update: a speed meter, a media position) reorders rows with
+     * `NotificationStackScrollLayout.changeViewPosition`, a `removeView` + `addView` of the row in one
+     * call. Zeroing the blur regions on that transient detach left every card without its blur for one
+     * frame: the dim flash on each update.
+     */
+    private fun hideBlursLater(v: View) {
+        if (synchronized(liveBlurs) { liveBlurs.isEmpty() }) return
+        if (!pendingHides.add(v)) return
+        main.post {
+            pendingHides.remove(v)
+            if (v.isAttachedToWindow && v.isShown) return@post
+            try { updateBlursUnder(v, true) } catch (t: Throwable) { Log.e(TAG, "blur drop", t) }
+        }
+    }
+
     private val inControlCenterCache = WeakHashMap<View, Boolean>()
 
     private fun inControlCenter(v: View): Boolean {
@@ -674,7 +1129,7 @@ class SystemUiPanels : IXposedHookLoadPackage {
 
     /** White on the shade's glass, and on the lock screen's only in dark mode (its light-mode card is pale). */
     private fun whiteSeekBar(bar: View): Boolean =
-        if (isLocked(bar)) night(bar) && GlassSettings[Surface.LOCK_CARD].enabled && !reducedTransparency(bar)
+        if (isLocked(bar)) night(bar) && GlassSettings[Surface.LOCK_CARD, night(bar)].enabled && !reducedTransparency(bar)
         else inShade(bar) && glassPanel(bar)
 
     private val panelButtonCache = WeakHashMap<View, Boolean>()
@@ -691,7 +1146,7 @@ class SystemUiPanels : IXposedHookLoadPackage {
     /** Whether the panel holding [v] is glass, so dimmed and in need of light text and icons. */
     private fun glassPanel(v: View): Boolean {
         val surface = if (inControlCenter(v)) Surface.CONTROL_CENTER else Surface.NOTIFICATION
-        return GlassSettings[surface].enabled && !reducedTransparency(v)
+        return GlassSettings[surface, night(v)].enabled && !reducedTransparency(v)
     }
 
     private val ccHeaderCache = WeakHashMap<View, Boolean>()
@@ -803,18 +1258,48 @@ class SystemUiPanels : IXposedHookLoadPackage {
         return ok
     }
 
+    private class SliderParentSpec(val bar: WeakReference<android.widget.SeekBar>)
+    private val sliderParents = WeakHashMap<View, SliderParentSpec>()
+    private val sliderParentRect = RectF()
+
+    /** Draws the slider's cross-window blur on its unrotated FrameLayout wrapper so BlurRegion keeps pill corners. */
+    private fun drawSliderParentBlur(vg: View, c: Canvas, spec: SliderParentSpec) {
+        val bar = spec.bar.get() ?: run { dropBlur(vg); return }
+        val st = GlassSettings[Surface.CONTROL_CENTER, night(vg)]
+        if (!st.enabled || reducedTransparency(vg) || !dim.available || vg.width <= 0 || vg.height <= 0) {
+            dropBlur(vg); return
+        }
+        val d = bar.progressDrawable ?: return
+        val track = (d as? LayerDrawable)?.let { it.findDrawableByLayerId(android.R.id.background) ?: it.getDrawable(0) } ?: return
+        if (track.bounds.isEmpty) return
+        val dp = vg.resources.displayMetrics.density
+        // SeekBar is rotated 270 deg and centred in vg: swap width/height into unrotated wrapper space.
+        val uw = if (kotlin.math.abs(bar.rotation % 180f) > 45f) track.bounds.height().toFloat() else track.bounds.width().toFloat()
+        val uh = if (kotlin.math.abs(bar.rotation % 180f) > 45f) track.bounds.width().toFloat() else track.bounds.height().toFloat()
+        val l = (vg.width - uw) / 2f
+        val t = (vg.height - uh) / 2f
+        sliderParentRect.set(l, t, l + uw, t + uh)
+        val radii = if (st.cornerDp != GlassStyle.ORIGINAL) cornerOverride(st, sliderParentRect, dp)
+            else radiiOf(track) ?: GlassSkin.uniform(minOf(uw, uh) / 2f)
+        liveBlur(vg, c, sliderParentRect, radii, st.blurPx(Looks.PANEL_CARD_BLUR_PX), Looks.panelSaturation(st))
+    }
+
     /**
      * Draws glass where the slider's track is and hides Nubia's track for this draw, keeping its
      * progress fill and thumb. Null when nothing was drawn (the original track draws).
      */
     private fun drawSliderTrack(bar: android.widget.SeekBar, c: Canvas): HiddenTrack? {
-        val st = GlassSettings[Surface.CONTROL_CENTER]
-        if (!st.enabled || reducedTransparency(bar)) { dropBlur(bar); return null }
+        val st = GlassSettings[Surface.CONTROL_CENTER, night(bar)]
+        if (!st.enabled || reducedTransparency(bar)) {
+            dropBlur(bar)
+            (bar.parent as? View)?.let { dropBlur(it) }
+            return null
+        }
         val d = bar.progressDrawable ?: return null
         val track = (d as? LayerDrawable)?.let { it.findDrawableByLayerId(android.R.id.background) ?: it.getDrawable(0) } ?: return null
         if (!sliderLogged) {
             sliderLogged = true
-            Log.i(TAG, "cc slider ${bar.javaClass.name} ${bar.width}x${bar.height} progress=${d.javaClass.simpleName}" +
+            Log.i(TAG, "cc slider ${bar.javaClass.name} ${bar.width}x${bar.height} rot=${bar.rotation} progress=${d.javaClass.simpleName}" +
                 " layers=${(d as? LayerDrawable)?.numberOfLayers} track=${track.javaClass.simpleName} ${track.bounds}" +
                 " parentBg=${(bar.parent as? View)?.background?.javaClass?.simpleName}")
         }
@@ -822,26 +1307,32 @@ class SystemUiPanels : IXposedHookLoadPackage {
         if (b.isEmpty) return null
         if (!settingsAttached) { settingsAttached = true; HookSettings.attach(bar.context); followLockState(bar.context) }
         sliders[bar] = true
+        val unrotatedParent = (bar.parent as? View)?.takeIf { kotlin.math.abs(bar.rotation) > 1f && kotlin.math.abs(it.rotation) < 1f }
+        if (unrotatedParent != null) {
+            dropBlur(bar)
+            if (sliderParents[unrotatedParent]?.bar?.get() !== bar) {
+                sliderParents[unrotatedParent] = SliderParentSpec(WeakReference(bar))
+                unrotatedParent.setWillNotDraw(false)
+                unrotatedParent.invalidate()
+            }
+        }
         val dp = bar.resources.displayMetrics.density
         val left = (bar.paddingLeft - bar.scrollX).toFloat()
         val top = (bar.paddingTop - bar.scrollY).toFloat()
         rect.set(b.left + left, b.top + top, b.right + left, b.bottom + top)
         val radii = if (st.cornerDp != GlassStyle.ORIGINAL) cornerOverride(st, rect, dp)
             else radiiOf(track) ?: GlassSkin.uniform(minOf(rect.width(), rect.height()) / 2)
-        drawGlass(bar, c, rect, radii, Surface.CONTROL_CENTER, st, null, dp)
+        // Clip both skin and Nubia's progress fill strictly to the pill/rounded shape so no square ears leak.
         val hidden = HiddenTrack(track, track.alpha, track.callback)
+        hidden.canvas = c
+        hidden.clip = c.save()
+        sliderClip.reset()
+        sliderClip.addRoundRect(rect, radii, android.graphics.Path.Direction.CW)
+        c.clipPath(sliderClip)
+        drawGlass(bar, c, rect, radii, Surface.CONTROL_CENTER, st, null, dp, withBlur = unrotatedParent == null)
         track.callback = null
         track.alpha = 0
         track.callback = hidden.callback
-        // Nubia's level fill keeps its own corners: with the user's corner it would stick out of the
-        // pill as a rounded square at the bottom (seen by the user), so clip it to the glass shape.
-        if (st.cornerDp != GlassStyle.ORIGINAL) {
-            hidden.canvas = c
-            hidden.clip = c.save()
-            sliderClip.reset()
-            sliderClip.addRoundRect(rect, radii, android.graphics.Path.Direction.CW)
-            c.clipPath(sliderClip)
-        }
         return hidden
     }
 
